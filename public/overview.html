@@ -12,30 +12,30 @@
 <body>
   <main>
     <div class="row" style="justify-content:space-between;margin-bottom:12px">
-      <h1 style="margin:0">Asset overview</h1>
+      <h1 style="margin:0">Equipment overview</h1>
       <div class="row">
         <span class="muted" id="updated"></span>
         <button class="btn" id="btn-csv" type="button">Export readings (CSV)</button>
       </div>
     </div>
     <div class="kpis" id="kpis"></div>
-    <div class="card"><div id="map" role="region" aria-label="Map of asset locations"></div></div>
-    <div class="card">
-      <div class="row" style="margin-bottom:10px">
-        <input class="grow" id="q" type="search" placeholder="Search serial, name, location" aria-label="Search">
-        <select id="f-type" aria-label="Equipment type"><option value="">All types</option></select>
-        <select id="f-where" aria-label="Location kind">
-          <option value="">All locations</option><option value="WTG">On turbines (WTG)</option><option value="SOV">On vessel (SOV)</option><option value="none">Never scanned</option>
-        </select>
-        <label class="row" style="gap:6px"><input type="checkbox" id="f-alert"> Alerts only</label>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Asset</th><th>Location</th><th>Last check</th><th>Alerts</th><th>Last scan</th></tr></thead>
-          <tbody id="rows"></tbody>
-        </table>
-      </div>
+    <div class="row" style="margin-bottom:16px">
+      <input class="grow" id="q" type="search" placeholder="Find a location, e.g. A03 or vessel name" aria-label="Find location">
+      <select id="f-type" aria-label="Equipment type"><option value="">All equipment</option></select>
+      <label class="row" style="gap:6px"><input type="checkbox" id="f-alert"> Needs attention only</label>
     </div>
+
+    <h2>On the vessel</h2>
+    <div class="loc-grid" id="sov-cards"></div>
+
+    <h2 style="margin-top:20px">On turbines</h2>
+    <div class="card"><div id="map" role="region" aria-label="Map of equipment on turbines"></div></div>
+    <div class="loc-grid" id="wtg-cards"></div>
+
+    <details class="card" id="unplaced" style="margin-top:16px">
+      <summary><b>Not yet scanned at a location</b> <span class="muted" id="unplaced-count"></span></summary>
+      <div id="unplaced-list" style="margin-top:10px"></div>
+    </details>
   </main>
   <aside class="drawer hidden" id="drawer" aria-labelledby="d-title"></aside>
   <script src="/vendor/leaflet/leaflet.js"></script>

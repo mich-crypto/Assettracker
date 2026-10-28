@@ -1,4 +1,5 @@
-// Site manager overview: where every asset is, its latest check values and alerts.
+// Site manager overview, organised by location: what equipment is on the vessel
+// and on each turbine, with its latest check values and alerts.
 import { ago, api, esc, fmtTime, registerServiceWorker, renderHeader, requireLogin, toast } from './app.js';
 import { evaluateAlerts, formatValue } from './fields.js';
 
@@ -19,7 +20,7 @@ async function init() {
   renderHeader('overview');
   registerServiceWorker();
   initMap();
-  ['q', 'f-type', 'f-where', 'f-alert'].forEach((id) => $(id).addEventListener('input', render));
+  ['q', 'f-type', 'f-alert'].forEach((id) => $(id).addEventListener('input', render));
   $('btn-csv').onclick = exportCsv;
   await load();
   setInterval(load, 60_000);
@@ -51,60 +52,100 @@ function enrich(a) {
   return { ...a, type, alerts, stale };
 }
 
+/** What a site manager calls a unit: its type plus its fixed choices, e.g. "Generator 350 kVA". */
+function kindOf(a) {
+  const extras = a.type.fields.filter((f) => f.scope === 'asset' && f.type === 'select' && a.attributes[f.key])
+    .map((f) => a.attributes[f.key]);
+  return [a.type.name, ...extras].join(' ');
+}
+
 function filtered() {
-  const q = $('q').value.trim().toLowerCase();
+  const q = $('q').value.trim().toLowerCase().replace(/\s+/g, '');
   const type = $('f-type').value;
-  const where = $('f-where').value;
   const alertsOnly = $('f-alert').checked;
   return assets.filter((a) => {
     if (type && a.type_id !== type) return false;
-    if (where === 'none' && a.last) return false;
-    if ((where === 'WTG' || where === 'SOV') && a.last?.location_kind !== where) return false;
     if (alertsOnly && !a.alerts.length) return false;
-    if (q && ![a.serial, a.name, a.last?.location_name, ...a.tags.map((t) => t.code)].some((v) => v && v.toLowerCase().includes(q))) return false;
+    if (q && !(a.last?.location_name || '').toLowerCase().replace(/\s+/g, '').includes(q)) return false;
     return true;
   });
 }
 
-function render() {
-  const list = filtered();
-  const kpi = (n, label) => `<div class="kpi"><b>${n}</b><span>${label}</span></div>`;
-  $('kpis').innerHTML =
-    kpi(assets.length, 'assets') +
-    kpi(assets.filter((a) => a.alerts.length).length, 'with alerts') +
-    kpi(`${assets.filter((a) => a.last?.location_kind === 'WTG').length} / ${assets.filter((a) => a.last?.location_kind === 'SOV').length}`, 'on WTG / on SOV') +
-    kpi(assets.filter((a) => a.stale).length, `not scanned in ${STALE_DAYS} days`);
-  renderTable(list);
-  renderMap(list);
+/** Groups units by their current location: { location, units }[]. */
+function byLocation(list) {
+  const groups = new Map();
+  for (const a of list) {
+    if (!a.last?.location_id) continue;
+    const loc = locations.find((l) => l.id === a.last.location_id) ||
+      { id: a.last.location_id, name: a.last.location_name, kind: a.last.location_kind };
+    if (!groups.has(loc.id)) groups.set(loc.id, { location: loc, units: [] });
+    groups.get(loc.id).units.push(a);
+  }
+  return [...groups.values()];
 }
 
-function checkSummary(a) {
-  if (!a.last) return '<span class="muted">—</span>';
-  return a.type.fields.filter((f) => f.scope === 'check' && a.last.data[f.key] != null && f.type !== 'multiselect')
-    .map((f) => `<div><span class="muted">${esc(f.label)}:</span> ${esc(formatValue(f, a.last.data[f.key]))}</div>`).join('');
+function render() {
+  const list = filtered();
+  const onSov = assets.filter((a) => a.last?.location_kind === 'SOV');
+  const onWtg = assets.filter((a) => a.last?.location_kind === 'WTG');
+  const kpi = (n, label) => `<div class="kpi"><b>${n}</b><span>${label}</span></div>`;
+  $('kpis').innerHTML =
+    kpi(onSov.length, 'on the vessel') +
+    kpi(`${onWtg.length}`, `on ${new Set(onWtg.map((a) => a.last.location_id)).size} turbines`) +
+    kpi(assets.filter((a) => a.alerts.length).length, 'need attention') +
+    kpi(assets.filter((a) => a.last && a.stale).length, `not checked in ${STALE_DAYS} days`);
+
+  const groups = byLocation(list);
+  const byName = (x, y) => x.location.name.localeCompare(y.location.name, undefined, { numeric: true });
+  const sovGroups = groups.filter((g) => g.location.kind === 'SOV').sort(byName);
+  // Show every vessel, even an empty one: "nothing on board" is useful to know.
+  for (const sov of locations.filter((l) => l.kind === 'SOV' && l.active)) {
+    if (!sovGroups.some((g) => g.location.id === sov.id) && !$('q').value && !$('f-alert').checked) sovGroups.push({ location: sov, units: [] });
+  }
+  const wtgGroups = groups.filter((g) => g.location.kind === 'WTG').sort(byName);
+  $('sov-cards').innerHTML = sovGroups.map(locationCard).join('') || '<p class="empty-note">No equipment on the vessel matches.</p>';
+  $('wtg-cards').innerHTML = wtgGroups.map(locationCard).join('') || '<p class="empty-note">No equipment on turbines matches.</p>';
+
+  const unplaced = list.filter((a) => !a.last);
+  $('unplaced').classList.toggle('hidden', !unplaced.length);
+  $('unplaced-count').textContent = `(${unplaced.length})`;
+  $('unplaced-list').innerHTML = summaryChips(unplaced);
+
+  document.querySelectorAll('.unit[data-id]').forEach((b) => (b.onclick = () => openAsset(b.dataset.id)));
+  renderMap(wtgGroups);
+}
+
+function summaryChips(units) {
+  const counts = new Map();
+  for (const a of units) counts.set(kindOf(a), (counts.get(kindOf(a)) || 0) + 1);
+  return `<div class="kind-summary">${[...counts].sort((x, y) => x[0].localeCompare(y[0], undefined, { numeric: true }))
+    .map(([k, n]) => `<span class="kind-chip">${n} × ${esc(k)}</span>`).join('')}</div>`;
+}
+
+function unitValues(a) {
+  return a.type.fields.filter((f) => f.scope === 'check' && f.type !== 'multiselect' && a.last.data[f.key] != null)
+    .map((f) => `${esc(f.label)} <b>${esc(formatValue(f, a.last.data[f.key]))}</b>`).join(' · ');
+}
+
+function locationCard(g) {
+  const units = [...g.units].sort((x, y) => kindOf(x).localeCompare(kindOf(y), undefined, { numeric: true }));
+  const attention = units.some((a) => a.alerts.length);
+  return `<section class="loc-card${attention ? ' attention' : ''}">
+    <h3><span>${esc(g.location.name)}</span>${attention ? '<span class="badge badge-danger">needs attention</span>' : ''}</h3>
+    ${units.length ? summaryChips(units) : '<p class="empty-note">Nothing on board.</p>'}
+    ${units.map((a) => `<button type="button" class="unit" data-id="${a.id}">
+      <div class="unit-kind">${esc(kindOf(a))}</div>
+      <div class="unit-vals">${unitValues(a)}</div>
+      ${a.alerts.length ? `<div>${a.alerts.map((x) => `<span class="badge badge-danger">${esc(x.text)}</span>`).join(' ')}</div>` : ''}
+      <div class="unit-vals">Checked ${esc(ago(a.last.recorded_at))}${a.stale ? ' <span class="badge badge-warn">over a week ago</span>' : ''}</div>
+    </button>`).join('')}
+  </section>`;
 }
 
 function sourceBadge(r) {
   if (r.location_source === 'gps') return '<span class="badge badge-ok" title="Confirmed by GPS">GPS</span>';
   const why = { no_fix: 'no GPS fix', poor_accuracy: 'weak GPS', implausible: 'GPS implausible (jamming?)', ok: 'chosen by user', unavailable: 'no GPS' }[r.gps_status] || '';
   return `<span class="badge badge-warn" title="Entered manually: ${esc(why)}">Manual</span>`;
-}
-
-function renderTable(list) {
-  $('rows').innerHTML = list.map((a) => {
-    const attrs = a.type.fields.filter((f) => f.scope === 'asset' && a.attributes[f.key] != null)
-      .map((f) => formatValue(f, a.attributes[f.key])).join(' · ');
-    const l = a.last;
-    return `<tr class="clickable" data-id="${a.id}">
-      <td><b>${esc(a.serial)}</b>${a.name ? ` <span class="muted">${esc(a.name)}</span>` : ''}
-        <div class="muted">${esc(a.type.name)}${attrs ? ` · ${esc(attrs)}` : ''}</div></td>
-      <td>${l ? `<b>${esc(l.location_name || '?')}</b> <span class="badge">${esc(l.location_kind || '')}</span><div>${sourceBadge(l)}</div>` : '<span class="muted">Never scanned</span>'}</td>
-      <td>${checkSummary(a)}</td>
-      <td>${a.alerts.length ? a.alerts.map((x) => `<div><span class="badge badge-danger">${esc(x.text)}</span></div>`).join('') : '<span class="muted">—</span>'}</td>
-      <td>${l ? `${esc(ago(l.recorded_at))}<div class="muted">${esc(l.user_name || '')}</div>` : ''}${a.stale && l ? '<div><span class="badge badge-warn">stale</span></div>' : ''}</td>
-    </tr>`;
-  }).join('') || '<tr><td colspan="5" class="muted">No assets match.</td></tr>';
-  $('rows').querySelectorAll('tr[data-id]').forEach((tr) => (tr.onclick = () => openAsset(tr.dataset.id)));
 }
 
 // ---------------------------------------------------------------- map
@@ -124,20 +165,7 @@ function initMap() {
   markerLayer = L.layerGroup().addTo(map);
 }
 
-/** Where to draw an asset: the WTG's surveyed position, or the reading's GPS fix on the SOV. */
-function positionOf(a) {
-  const l = a.last;
-  if (!l) return null;
-  if (l.location_kind === 'WTG' && l.location_lat != null) return { key: `loc:${l.location_id}`, lat: l.location_lat, lon: l.location_lon, title: l.location_name };
-  if (l.location_kind === 'SOV') {
-    const sov = locations.find((x) => x.id === l.location_id);
-    if (l.lat != null && l.gps_status === 'ok') return { key: `loc:${l.location_id}`, lat: l.lat, lon: l.lon, title: `${l.location_name} (last fix)` };
-    if (sov?.lat != null) return { key: `loc:${l.location_id}`, lat: sov.lat, lon: sov.lon, title: l.location_name };
-  }
-  return null;
-}
-
-function renderMap(list) {
+function renderMap(wtgGroups) {
   if (!map) return;
   markerLayer.clearLayers();
   const bounds = [];
@@ -146,20 +174,15 @@ function renderMap(list) {
       .bindTooltip(l.name).addTo(markerLayer);
     bounds.push([l.lat, l.lon]);
   }
-  const groups = new Map();
-  for (const a of list) {
-    const p = positionOf(a);
-    if (!p) continue;
-    if (!groups.has(p.key)) groups.set(p.key, { ...p, assets: [] });
-    groups.get(p.key).assets.push(a);
-  }
-  for (const g of groups.values()) {
-    const alert = g.assets.some((a) => a.alerts.length);
-    const icon = L.divIcon({ className: '', html: `<div class="map-count${alert ? ' alert' : ''}">${g.assets.length}</div>`, iconSize: [28, 28] });
-    const html = `<b>${esc(g.title)}</b><br>${g.assets.map((a) =>
-      `${esc(a.serial)}${a.alerts.length ? ' <span style="color:#c0392b">⚠</span>' : ''}`).join('<br>')}`;
-    L.marker([g.lat, g.lon], { icon, zIndexOffset: 1000 }).bindPopup(html).addTo(markerLayer);
-    bounds.push([g.lat, g.lon]);
+  for (const g of wtgGroups) {
+    if (g.location.lat == null) continue;
+    const alert = g.units.some((a) => a.alerts.length);
+    const icon = L.divIcon({ className: '', html: `<div class="map-count${alert ? ' alert' : ''}">${g.units.length}</div>`, iconSize: [28, 28] });
+    const counts = new Map();
+    for (const a of g.units) counts.set(kindOf(a), (counts.get(kindOf(a)) || 0) + 1);
+    const html = `<b>${esc(g.location.name)}</b><br>${[...counts].map(([k, n]) => `${n} × ${esc(k)}`).join('<br>')}` +
+      (alert ? '<br><span style="color:#c0392b">⚠ needs attention</span>' : '');
+    L.marker([g.location.lat, g.location.lon], { icon, zIndexOffset: 1000 }).bindPopup(html).addTo(markerLayer);
   }
   if (!fitted && bounds.length) {
     map.fitBounds(bounds, { padding: [30, 30], maxZoom: 12 });
@@ -179,12 +202,13 @@ async function openAsset(id) {
     const checks = type.fields.filter((f) => f.scope === 'check');
     drawer.innerHTML = `
       <div class="row" style="justify-content:space-between">
-        <h2 id="d-title" style="margin:0">${esc(asset.serial)}</h2>
+        <h2 id="d-title" style="margin:0">${esc(kindOf({ ...asset, type }))}</h2>
         <button class="btn" type="button" id="d-close">Close</button>
       </div>
-      <p class="muted">${esc(type.name)}${asset.name ? ` · ${esc(asset.name)}` : ''} · tags: ${asset.tags.map((t) => `<span class="mono">${esc(t.code)}</span>`).join(', ') || 'none'}</p>
+      <p class="muted">${readings[0] ? `At ${esc(readings[0].location_name || '?')} · checked ${esc(ago(readings[0].recorded_at))}` : 'Not scanned yet'}</p>
       <dl class="kv">${type.fields.filter((f) => f.scope === 'asset').map((f) =>
         `<dt>${esc(f.label)}</dt><dd>${esc(formatValue(f, asset.attributes[f.key]))}</dd>`).join('')}</dl>
+      <p class="muted" style="font-size:.85rem">Serial ${esc(asset.serial)}${asset.name ? ` · ${esc(asset.name)}` : ''}</p>
       <h3 style="margin-top:16px">History (${readings.length})</h3>
       <div class="table-wrap"><table>
         <thead><tr><th>When</th><th>Location</th>${checks.map((f) => `<th>${esc(f.label)}</th>`).join('')}<th>By</th></tr></thead>

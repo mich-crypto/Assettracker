@@ -244,3 +244,17 @@ tbody tr.clickable:hover { background: var(--surface-2); }
 .check-inline input { width: 20px; height: 20px; }
 .preview { border: 1px dashed var(--border); border-radius: var(--radius); padding: 12px; background: var(--bg); }
 .preview-cap { font-size: .8rem; text-transform: uppercase; letter-spacing: .03em; margin: 4px 0 8px; }
+
+/* ---------- overview by location */
+.loc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+.loc-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; box-shadow: var(--shadow); }
+.loc-card.attention { border-color: var(--danger); }
+.loc-card h3 { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; margin-bottom: 6px; }
+.kind-summary { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.kind-chip { background: var(--surface-2); border-radius: 8px; padding: 4px 10px; font-weight: 600; font-size: .92rem; }
+.unit { display: block; width: 100%; text-align: left; font: inherit; color: inherit; background: none; border: 0; border-top: 1px solid var(--border); padding: 8px 0; cursor: pointer; }
+.unit:hover { background: var(--surface-2); }
+.unit-kind { font-weight: 600; }
+.unit-vals { font-size: .9rem; color: var(--muted); }
+.unit-vals b { color: var(--text); font-weight: 600; }
+.empty-note { color: var(--muted); padding: 8px 0; }
