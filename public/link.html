@@ -17,7 +17,7 @@
           <h1 id="form-title" style="margin:0">Link new asset</h1>
           <button type="button" class="link-btn hidden" id="btn-new">+ New asset</button>
         </div>
-        <p class="muted">Assign a QR label and/or NFC tag to a piece of equipment.</p>
+        <p class="muted">Assign a QR label and/or NFC tag to a piece of equipment. On a phone, <a href="/add">Add equipment</a> walks you through it step by step.</p>
         <div class="field">
           <label for="type">Equipment type <span class="req">*</span></label>
           <select id="type" name="type_id" required></select>
@@ -48,10 +48,20 @@
       </form>
 
       <div>
+        <div class="card" id="blank-card">
+          <h2>Blank QR labels</h2>
+          <p class="muted">Print a sheet of new labels to stick on generators. Each label is linked when it is scanned in <a href="/add">Add equipment</a>.</p>
+          <div class="row">
+            <label for="blank-count">Number of labels</label>
+            <input id="blank-count" type="number" min="1" max="100" value="12" style="width:100px">
+            <button type="button" class="btn btn-primary" id="btn-blank">Create &amp; print</button>
+          </div>
+          <div id="blank-labels" class="label-sheet hidden"></div>
+        </div>
         <div class="card print-area hidden" id="label-card">
           <div class="row" style="justify-content:space-between">
             <h2 style="margin:0">Labels</h2>
-            <button type="button" class="btn" onclick="window.print()">Print</button>
+            <button type="button" class="btn" id="btn-print-labels">Print</button>
           </div>
           <div id="labels" class="row" style="margin-top:12px"></div>
         </div>

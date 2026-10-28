@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Add equipment · AssetTracker</title>
+  <meta name="theme-color" content="#0b5cad">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icons/icon.svg">
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <main class="narrow">
+    <div class="wizard-progress" id="progress" aria-hidden="true"></div>
+    <p class="muted wizard-step-label" id="step-label"></p>
+    <section class="card wizard" id="step" aria-live="polite"></section>
+    <div class="wizard-nav">
+      <button type="button" class="btn" id="btn-back">Back</button>
+      <button type="button" class="btn btn-primary" id="btn-next">Next</button>
+    </div>
+  </main>
+  <script src="/vendor/jsQR.js" defer></script>
+  <script type="module" src="/js/add.js"></script>
+</body>
+</html>

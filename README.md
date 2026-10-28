@@ -6,7 +6,8 @@ Cloudflare (Workers + D1) and has an offline-first phone app for technicians.
 | Screen | Path | Who | Purpose |
 |---|---|---|---|
 | **Overview** | `/overview` | Site manager (also supervisor, admin) | By location: what equipment is on the SOV and on each WTG (e.g. "2 × Generator 30 kVA"), with latest fuel level / fuel cube / alarms, attention flags, map, history, CSV export. No serials or tag codes |
-| **Link tags** | `/link` | Warehouse supervisor | Register equipment (type, serial, e.g. 30 kVA / 350 kVA), generate and print QR labels, scan existing QR labels, read/write NFC tags |
+| **Add equipment** | `/add` | Warehouse supervisor, on the phone | Step by step: rating (e.g. 30 / 350 kVA), serial number, stick the QR label on the generator window, scan it, saved |
+| **Link tags** | `/link` | Warehouse supervisor | Edit equipment and tags, print sheets of blank QR labels, read/write NFC tags |
 | **Scan** | `/field` | Technicians and warehouse supervisor | Scan QR/NFC, auto-detect WTG or SOV by GPS, enter fuel level, fuel cube, alarms. Works offline and syncs later |
 | **Setup** | `/admin` | Admin (locations also supervisor) | WTG/SOV locations (CSV import), users and roles, equipment types and their fields |
 

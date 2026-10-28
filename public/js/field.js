@@ -221,8 +221,8 @@ async function openCode(code) {
       showDataAge();
     } catch (e) {
       if (e.status === 404) {
-        if (can('link') && confirm(`Tag ${code} is not linked to an asset yet. Link it now?`)) {
-          location.href = `/link#t=${encodeURIComponent(code)}`;
+        if (can('link') && confirm(`Label ${code} is not linked to any equipment yet. Add the equipment now?`)) {
+          location.href = `/add#t=${encodeURIComponent(code)}`;
           return;
         }
         if (!can('link')) toast(`Tag ${code} is not linked to any asset. Ask the warehouse supervisor to link it.`, 'error');

@@ -79,11 +79,13 @@ export function homeFor(user) {
   return '/field';
 }
 
+// [permission, href, label, page id]
 const NAV = [
-  ['overview', '/overview', 'Overview'],
-  ['link', '/link', 'Link tags'],
-  ['field', '/field', 'Scan'],
-  ['locations', '/admin', 'Setup'],
+  ['overview', '/overview', 'Overview', 'overview'],
+  ['link', '/add', 'Add', 'add'],
+  ['link', '/link', 'Link tags', 'link'],
+  ['field', '/field', 'Scan', 'field'],
+  ['locations', '/admin', 'Setup', 'locations'],
 ];
 
 /** Renders the top bar with role-appropriate navigation and the sync indicator. */
@@ -93,8 +95,8 @@ export function renderHeader(active) {
   header.className = 'topbar';
   header.innerHTML = `
     <a class="brand" href="/">Asset<b>Tracker</b></a>
-    <nav>${NAV.filter(([p]) => can(p)).map(([p, href, label]) =>
-      `<a href="${href}"${p === active ? ' aria-current="page"' : ''}>${label}</a>`).join('')}</nav>
+    <nav>${NAV.filter(([p]) => can(p)).map(([, href, label, id]) =>
+      `<a href="${href}"${id === active ? ' aria-current="page"' : ''}>${label}</a>`).join('')}</nav>
     <div class="topbar-right">
       <button type="button" class="sync-pill" id="sync-pill" title="Sync now"></button>
       <span class="who">${esc(user?.name || '')}</span>

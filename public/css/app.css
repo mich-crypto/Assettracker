@@ -219,7 +219,11 @@ tbody tr.clickable:hover { background: var(--surface-2); }
 .label svg { width: 120px; height: 120px; display: block; }
 .label .l-serial { font-weight: 700; font-size: 1.05rem; }
 .label .l-code { font-family: ui-monospace, monospace; font-size: .85rem; }
+.label-sheet { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 12px; }
+.label-blank { grid-template-columns: 1fr; justify-items: center; text-align: center; gap: 4px; }
 @media print {
+  #blank-card > :not(.label-sheet) { display: none; }
+  .label-sheet { grid-template-columns: repeat(4, 1fr); }
   body * { visibility: hidden; }
   .print-area, .print-area * { visibility: visible; }
   .print-area { position: absolute; left: 0; top: 0; }
@@ -259,3 +263,23 @@ tbody tr.clickable:hover { background: var(--surface-2); }
 .unit-vals { font-size: .9rem; color: var(--muted); }
 .unit-vals b { color: var(--text); font-weight: 600; }
 .empty-note { color: var(--muted); padding: 8px 0; }
+
+/* ---------- add-equipment walkthrough */
+.wizard-progress { display: flex; gap: 6px; margin: 4px 0 8px; }
+.wizard-progress span { flex: 1; height: 6px; border-radius: 3px; background: var(--border); }
+.wizard-progress span.done { background: var(--primary); }
+.wizard-step-label { margin: 0 0 8px; font-size: .9rem; }
+.wizard { min-height: 300px; }
+.wizard h1 { font-size: 1.35rem; }
+.wizard-nav { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; }
+.wizard-nav .btn { min-height: 56px; font-size: 1.05rem; }
+.choice-list { display: grid; gap: 10px; }
+.choice-list .btn { min-height: 72px; font-size: 1.3rem; justify-content: flex-start; padding-left: 20px; }
+.choice-list .btn[aria-pressed="true"] { background: var(--primary); color: var(--primary-ink); border-color: var(--primary); }
+.wizard input.big { font-size: 1.3rem; min-height: 60px; text-transform: uppercase; }
+.sticker-hint { display: grid; place-items: center; margin: 12px 0; }
+.sticker-hint svg { width: 180px; height: auto; }
+.done-mark { font-size: 3rem; line-height: 1; color: var(--ok); }
+.summary-list { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 12px 0; font-size: 1.05rem; }
+.summary-list dt { color: var(--muted); }
+.summary-list dd { margin: 0; font-weight: 600; }

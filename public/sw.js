@@ -1,12 +1,12 @@
 // Service worker: keeps the app shell available offline so technicians can
 // scan at a turbine without signal. Data (assets, outbox) lives in IndexedDB;
 // API calls are never cached here.
-const VERSION = 'v1';
+const VERSION = 'v2';
 const SHELL = [
-  '/', '/field', '/link', '/overview', '/admin',
+  '/', '/field', '/add', '/link', '/overview', '/admin',
   '/manifest.webmanifest', '/icons/icon.svg', '/css/app.css',
   '/js/app.js', '/js/store.js', '/js/fields.js', '/js/geo.js', '/js/forms.js', '/js/scan.js',
-  '/js/field.js', '/js/link.js', '/js/overview.js', '/js/admin.js',
+  '/js/field.js', '/js/add.js', '/js/link.js', '/js/overview.js', '/js/admin.js',
   '/vendor/jsQR.js', '/vendor/qrcode.js', '/vendor/leaflet/leaflet.js', '/vendor/leaflet/leaflet.css',
 ];
 

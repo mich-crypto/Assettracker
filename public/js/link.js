@@ -37,6 +37,8 @@ async function init() {
   $('btn-retire').onclick = onRetire;
   $('asset-form').onsubmit = onSave;
   $('search').oninput = renderList;
+  $('btn-blank').onclick = printBlankLabels;
+  $('btn-print-labels').onclick = () => printOnly($('label-card'));
   startNew();
   renderList();
 
@@ -252,4 +254,28 @@ function renderLabels(asset) {
         <div class="l-code">${esc(t.code)}</div>
       </div>
     </div>`).join('');
+}
+
+/** Prints just one card: the print stylesheet shows only `.print-area`. */
+function printOnly(el) {
+  const others = [...document.querySelectorAll('.print-area')].filter((x) => x !== el);
+  others.forEach((x) => x.classList.remove('print-area'));
+  el.classList.add('print-area');
+  window.addEventListener('afterprint', () => {
+    if (el.id !== 'label-card') el.classList.remove('print-area');
+    others.forEach((x) => x.classList.add('print-area'));
+  }, { once: true });
+  window.print();
+}
+
+// Pre-printed labels: new random codes, not linked to anything until scanned in Add equipment.
+function printBlankLabels() {
+  const n = Math.max(1, Math.min(100, Number($('blank-count').value) || 12));
+  const sheet = $('blank-labels');
+  sheet.innerHTML = Array.from({ length: n }, () => {
+    const code = newTagCode();
+    return `<div class="label label-blank">${qrSvg(tagUrl(code))}<div class="l-code">${esc(code)}</div></div>`;
+  }).join('');
+  sheet.classList.remove('hidden');
+  printOnly($('blank-card'));
 }
