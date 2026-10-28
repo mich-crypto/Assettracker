@@ -5,7 +5,7 @@ import {
   ago, api, can, deviceId, esc, loadReference, registerServiceWorker, renderHeader, requireLogin,
   startAutoSync, syncNow, toast, updateSyncPill,
 } from './app.js';
-import { evaluateAlerts, formatValue, normalizeValues } from './fields.js';
+import { evaluateAlerts, normalizeValues } from './fields.js';
 import { collectFields, renderFields, showErrors } from './forms.js';
 import { distanceM, resolveLocation } from './geo.js';
 import { nfcSupported, parseTagText, readNfc, scanQr } from './scan.js';
@@ -242,6 +242,13 @@ async function openCode(code) {
   showReading();
 }
 
+/** e.g. "Generator 350 kVA": the type plus its fixed choices (the rating). */
+function kindOf(asset, type) {
+  const extras = type.fields.filter((f) => f.scope === 'asset' && f.type === 'select' && asset.attributes[f.key])
+    .map((f) => asset.attributes[f.key]);
+  return [type.name, ...extras].join(' ');
+}
+
 function pickType() {
   const names = ref.types.map((t, i) => `${i + 1}. ${t.name}`).join('\n');
   const n = Number(prompt(`Tag not in the offline list. What kind of equipment is it?\n${names}`, '1'));
@@ -254,12 +261,9 @@ function showReading() {
   const { asset, type, code } = current;
   manualChoice = false;
   chosenLocation = null;
-  $('a-title').textContent = asset ? `${asset.serial}${asset.name ? ` - ${asset.name}` : ''}` : code;
-  $('a-sub').textContent = `${type.name} · tag ${code}`;
-  $('a-attrs').innerHTML = asset
-    ? type.fields.filter((f) => f.scope === 'asset').map((f) =>
-        `<dt>${esc(f.label)}</dt><dd>${esc(formatValue(f, asset.attributes[f.key]))}</dd>`).join('')
-    : '';
+  // Only what the technician needs: the kind with its rating, and the tag ID.
+  $('a-title').textContent = asset ? kindOf(asset, type) : type.name;
+  $('a-sub').textContent = `Tag ${code}`;
   $('a-unknown').classList.toggle('hidden', !!asset);
   $('a-unknown').textContent = 'This tag is not in the offline asset list. The reading will be matched to its asset when it syncs.';
   renderFields($('check-fields'), type.fields, 'check');
@@ -338,7 +342,7 @@ async function onSave(e) {
     device_id: deviceId(),
     recorded_by: user.name,
     // Local-only display label; stripped before upload.
-    label: `${current.asset?.serial ?? current.code} @ ${atHere ? labelFor(HERE) : chosenLocation.name}`,
+    label: `${current.asset ? kindOf(current.asset, current.type) : current.type.name} · tag ${current.code} @ ${atHere ? labelFor(HERE) : chosenLocation.name}`,
   };
   await outbox.put(reading);
   const alerts = evaluateAlerts(current.type.fields, values);
