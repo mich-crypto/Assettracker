@@ -86,7 +86,7 @@ function watchGps() {
     (p) => {
       bestFix = { lat: p.coords.latitude, lon: p.coords.longitude, accuracy: p.coords.accuracy, timestamp: p.timestamp };
       $('gps-warm').textContent = `GPS ready (±${Math.round(p.coords.accuracy)} m).`;
-      if (current && !manualChoice) applyResolution();
+      if (current && !manualChoice && geoCheckOn()) applyResolution();
     },
     (err) => {
       $('gps-warm').textContent = err.code === err.PERMISSION_DENIED
@@ -95,6 +95,25 @@ function watchGps() {
     },
     { enableHighAccuracy: true, maximumAge: 30_000, timeout: 30_000 },
   );
+}
+
+// Off while testing away from the wind farm (GEO_CHECK=off on the server).
+const geoCheckOn = () => ref?.settings?.geoCheck !== false;
+const LAST_LOCATION_KEY = 'at.lastLocation';
+
+/** Testing mode: no GPS lock or warnings; the user picks any location. */
+function applyTestMode() {
+  resolution = null;
+  const lastId = localStorage.getItem(LAST_LOCATION_KEY);
+  chosenLocation = ref.locations.find((l) => l.id === lastId) || null;
+  manualChoice = !!chosenLocation;
+  $('loc-box').className = 'loc-box';
+  $('loc-status').textContent = 'Location check off (testing)';
+  $('loc-name').textContent = chosenLocation ? labelFor(chosenLocation) : '';
+  $('loc-detail').textContent = 'GPS is not checked against the turbine positions. Select any location.';
+  $('btn-loc-change').classList.add('hidden');
+  $('btn-loc-manual').classList.add('hidden');
+  showManualPicker(false);
 }
 
 function applyResolution() {
@@ -239,7 +258,9 @@ function showReading() {
   window.scrollTo(0, 0);
 
   clearTimeout(fixTimer);
-  if (bestFix || !('geolocation' in navigator)) {
+  if (!geoCheckOn()) {
+    applyTestMode();
+  } else if (bestFix || !('geolocation' in navigator)) {
     applyResolution();
   } else {
     // The GPS watcher applies the fix as soon as it arrives; after a grace
@@ -276,7 +297,10 @@ async function onSave(e) {
   if (Object.keys(errors).length) return;
 
   const fix = bestFix;
-  const usedGps = !manualChoice && resolution && !resolution.requiresManual;
+  // In testing mode the GPS status is still recorded, it just never decided the location.
+  if (!geoCheckOn()) resolution = resolveLocation(fix, ref.locations);
+  const usedGps = geoCheckOn() && !manualChoice && resolution && !resolution.requiresManual;
+  localStorage.setItem(LAST_LOCATION_KEY, chosenLocation.id);
   const reading = {
     id: crypto.randomUUID(),
     asset_id: current.asset?.id ?? null,

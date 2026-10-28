@@ -14,13 +14,29 @@ export function renderFields(container, defs, scope, values = {}) {
   });
 }
 
+/** The allowed values of a stepped number field, if there are few enough to show as buttons. */
+function stepChoices(f) {
+  if (!f.step || f.min == null || f.max == null) return null;
+  const n = Math.floor((f.max - f.min) / f.step) + 1;
+  if (n < 2 || n > 11) return null;
+  return Array.from({ length: n }, (_, i) => f.min + i * f.step);
+}
+
 function fieldHtml(f, value) {
   const id = `f_${f.scope}_${f.key}`;
   const req = f.required ? ' required' : '';
-  const label = `${esc(f.label)}${f.unit ? ` <span class="muted">(${esc(f.unit)})</span>` : ''}${f.required ? ' <span class="req">*</span>' : ''}`;
+  const optional = !f.required && !['boolean', 'multiselect'].includes(f.type) ? ' <span class="muted">(optional)</span>' : '';
+  const label = `${esc(f.label)}${f.unit ? ` <span class="muted">(${esc(f.unit)})</span>` : ''}${f.required ? ' <span class="req">*</span>' : optional}`;
   let input;
   switch (f.type) {
     case 'number': {
+      const choices = stepChoices(f);
+      if (choices) {
+        // Few fixed steps (e.g. fuel 0/25/50/75/100 %): big tap targets instead of typing.
+        input = `<div class="segmented segmented-wide" role="radiogroup" aria-labelledby="${id}_l">${choices.map((c, i) =>
+          `<label><input type="radio" name="${f.key}" value="${c}"${value === c ? ' checked' : ''}${req && i === 0 ? req : ''}><span>${c}${f.unit === '%' ? '%' : ''}</span></label>`).join('')}</div>`;
+        return `<fieldset class="field"><legend id="${id}_l">${label}</legend>${input}<div class="field-error" data-error-for="${f.key}"></div></fieldset>`;
+      }
       const attrs = `${f.min != null ? ` min="${f.min}"` : ''}${f.max != null ? ` max="${f.max}"` : ''}`;
       const slider = f.min != null && f.max != null && f.max - f.min <= 1000
         ? `<input type="range" data-range-for="${f.key}" step="1"${attrs} value="${esc(value ?? f.min)}">` : '';
@@ -60,7 +76,8 @@ export function collectFields(container, defs, scope) {
       const c = container.querySelector(`[name="${f.key}"]:checked`);
       out[f.key] = c ? c.value === 'true' : null;
     } else {
-      const el = container.querySelector(`[name="${f.key}"]:not([type=range])`);
+      const el = container.querySelector(`[name="${f.key}"]:checked`) ||
+        container.querySelector(`[name="${f.key}"]:not([type=range]):not([type=radio])`);
       out[f.key] = el ? el.value : null;
     }
   }

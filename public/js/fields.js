@@ -7,7 +7,8 @@
 //   { key, label, type, scope, required?, options?, min?, max?, unit?, alert? }
 //   type:  number | text | boolean | select | multiselect | date
 //   scope: asset (set once when linking) | check (captured on every scan)
-//   alert: { below: n } | { above: n } | { equals: value } | { any: true }
+//   step:  numbers only, value must be min + k*step (e.g. fuel in 25% steps)
+//   alert: { below: n } | { atMost: n } | { above: n } | { equals: value } | { any: true }
 
 export const FIELD_TYPES = ['number', 'text', 'boolean', 'select', 'multiselect', 'date'];
 export const FIELD_SCOPES = ['asset', 'check'];
@@ -32,6 +33,7 @@ export function validateFieldDefs(defs) {
         (!Array.isArray(f.options) || f.options.length === 0 || f.options.some((o) => typeof o !== 'string' || !o))) {
       errors.push(`${where}: options must be a non-empty list of text values`);
     }
+    if (f.step != null && !(typeof f.step === 'number' && f.step > 0)) errors.push(`${where}: step must be a positive number`);
     for (const k of ['min', 'max']) {
       if (f[k] != null && typeof f[k] !== 'number') errors.push(`${where}: ${k} must be a number`);
     }
@@ -63,6 +65,10 @@ export function normalizeValues(defs, scope, input) {
         if (!Number.isFinite(n)) { errors[f.key] = `${f.label} must be a number`; continue; }
         if (f.min != null && n < f.min) { errors[f.key] = `${f.label} must be at least ${f.min}`; continue; }
         if (f.max != null && n > f.max) { errors[f.key] = `${f.label} must be at most ${f.max}`; continue; }
+        if (f.step && Math.abs(((n - (f.min ?? 0)) / f.step) - Math.round((n - (f.min ?? 0)) / f.step)) > 1e-9) {
+          errors[f.key] = `${f.label} must be in steps of ${f.step}${f.unit ? ` ${f.unit}` : ''}`;
+          continue;
+        }
         values[f.key] = n;
         break;
       }
@@ -107,6 +113,7 @@ export function evaluateAlerts(defs, values) {
     if (!a || isBlank(v)) continue;
     let hit = false;
     if (a.below != null && typeof v === 'number' && v < a.below) hit = true;
+    if (a.atMost != null && typeof v === 'number' && v <= a.atMost) hit = true;
     if (a.above != null && typeof v === 'number' && v > a.above) hit = true;
     if ('equals' in a && v === a.equals) hit = true;
     if (a.any && Array.isArray(v) && v.length > 0) hit = true;

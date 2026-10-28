@@ -7,7 +7,10 @@
   "vars": {
     // "open": no logins, anyone with the URL can use every screen.
     // Set to "login" to require accounts (then SESSION_SECRET and SETUP_KEY are needed).
-    "AUTH_MODE": "open"
+    "AUTH_MODE": "open",
+    // "off" while testing on shore: no GPS check against WTG positions, pick any location.
+    // Set to "on" offshore so the phone confirms WTG / SOV by GPS and flags jamming.
+    "GEO_CHECK": "off"
   },
   "assets": {
     "directory": "./public",

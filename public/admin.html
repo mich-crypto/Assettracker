@@ -54,7 +54,7 @@
 
     <section class="card hidden" id="types-card">
       <h2>Equipment types &amp; fields</h2>
-      <p class="muted">Each type defines its own data. <code>scope: "asset"</code> fields are filled in once when linking (e.g. kVA rating); <code>scope: "check"</code> fields are asked on every scan (e.g. fuel level). Field types: number, text, boolean, select, multiselect, date. Optional: <code>required</code>, <code>min</code>, <code>max</code>, <code>unit</code>, <code>options</code>, and an <code>alert</code> rule (<code>{"below": 25}</code>, <code>{"above": 90}</code>, <code>{"equals": true}</code>, <code>{"any": true}</code>) that flags the asset on the overview.</p>
+      <p class="muted">Each type defines its own data. <code>scope: "asset"</code> fields are filled in once when linking (e.g. kVA rating); <code>scope: "check"</code> fields are asked on every scan (e.g. fuel level). Field types: number, text, boolean, select, multiselect, date. Optional: <code>required</code>, <code>min</code>, <code>max</code>, <code>step</code> (e.g. 25 shows 0/25/50/75/100 as buttons), <code>unit</code>, <code>options</code>, and an <code>alert</code> rule (<code>{"below": 25}</code>, <code>{"atMost": 25}</code>, <code>{"above": 90}</code>, <code>{"equals": true}</code>, <code>{"any": true}</code>) that flags the asset on the overview.</p>
       <div class="row" style="margin-bottom:10px">
         <select id="t-select" aria-label="Type to edit"></select>
         <button class="btn" type="button" id="t-new">New type</button>

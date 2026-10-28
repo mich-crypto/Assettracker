@@ -144,6 +144,9 @@ router.add('GET', '/api/bootstrap', async ({ env, user }) => {
   return json({
     user,
     serverTime: nowIso(),
+    // GEO_CHECK=off (testing away from the wind farm): the phone does not use
+    // GPS to pick or lock the location; any location can be chosen.
+    settings: { geoCheck: env.GEO_CHECK !== 'off' },
     types: types.results.map(typeOut),
     locations: locations.results,
     assets: assets.results.map(assetOut),

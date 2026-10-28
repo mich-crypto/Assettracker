@@ -6,6 +6,9 @@ import { evaluateAlerts, normalizeValues, validateFieldDefs } from '../public/js
 // The generator definition shipped in the first migration.
 const sql = readFileSync(new URL('../migrations/0001_init.sql', import.meta.url), 'utf8');
 const generator = JSON.parse(sql.match(/'generator',\s*'Generator',\s*'(\[[\s\S]*?\])'/)[1]);
+// ...as updated by later migrations (fuel level in 25 % steps).
+const sql3 = readFileSync(new URL('../migrations/0003_fuel_steps.sql', import.meta.url), 'utf8');
+const generatorNow = JSON.parse(sql3.match(/SET fields = '(\[[\s\S]*?\])'/)[1]);
 
 test('seeded generator type is valid and offers 30 / 350 kVA', () => {
   assert.deepEqual(validateFieldDefs(generator), []);
@@ -40,4 +43,14 @@ test('field definition validation catches mistakes', () => {
     { key: 'pick', label: 'Dup', type: 'colour', scope: 'nowhere' },
   ]);
   assert.equal(errors.length, 5);
+});
+
+test('current generator type: fuel in 25 % steps, alert at 25 % or less, running hours optional', () => {
+  assert.deepEqual(validateFieldDefs(generatorNow), []);
+  const ok = normalizeValues(generatorNow, 'check', { fuel_level: '75', fuel_cube: true });
+  assert.deepEqual(ok.errors, {}, 'running hours may be left empty');
+  assert.equal(ok.values.fuel_level, 75);
+  assert.match(normalizeValues(generatorNow, 'check', { fuel_level: 60, fuel_cube: true }).errors.fuel_level, /steps of 25/);
+  assert.deepEqual(evaluateAlerts(generatorNow, { fuel_level: 25, fuel_cube: true }).map((a) => a.key), ['fuel_level']);
+  assert.deepEqual(evaluateAlerts(generatorNow, { fuel_level: 50, fuel_cube: true }), []);
 });
