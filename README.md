@@ -89,7 +89,7 @@ start recording oil level on generators, add a field to the generator type.
 ```bash
 npm install
 npx wrangler login
-npx wrangler d1 create assettracker          # copy the database_id into wrangler.jsonc
+# D1 database "assetdatabase" already exists and is configured in wrangler.jsonc
 npm run db:migrate:remote
 npx wrangler secret put SESSION_SECRET       # e.g. output of: openssl rand -base64 48
 npx wrangler secret put SETUP_KEY            # one-time key to create the first admin

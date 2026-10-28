@@ -7,9 +7,9 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "db:migrate:local": "wrangler d1 migrations apply assettracker --local",
-    "db:migrate:remote": "wrangler d1 migrations apply assettracker --remote",
-    "db:seed:local": "wrangler d1 execute assettracker --local --file=seed/demo.sql",
+    "db:migrate:local": "wrangler d1 migrations apply assetdatabase --local",
+    "db:migrate:remote": "wrangler d1 migrations apply assetdatabase --remote",
+    "db:seed:local": "wrangler d1 execute assetdatabase --local --file=seed/demo.sql",
     "vendor": "node scripts/copy-vendor.mjs",
     "test": "node --test test/*.test.js"
   },

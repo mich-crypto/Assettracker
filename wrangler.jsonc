@@ -13,9 +13,8 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "assettracker",
-      // Replace with the id printed by: npx wrangler d1 create assettracker
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_name": "assetdatabase",
+      "database_id": "b9f3ef85-552c-46d1-8096-e4de9dca2031",
       "migrations_dir": "migrations"
     }
   ]
