@@ -13,6 +13,10 @@ export const session = {
     localStorage.setItem(TOKEN_KEY, token);
     localStorage.setItem(USER_KEY, JSON.stringify(user));
   },
+  /** No-login mode: a placeholder token plus the name typed on this device. */
+  setOpen(name) {
+    this.set('open', { id: null, name, role: 'admin', open: true });
+  },
   clear() {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
@@ -94,15 +98,17 @@ export function renderHeader(active) {
     <div class="topbar-right">
       <button type="button" class="sync-pill" id="sync-pill" title="Sync now"></button>
       <span class="who">${esc(user?.name || '')}</span>
-      <button type="button" class="link-btn" id="logout">Sign out</button>
+      ${user?.open
+        ? '<a class="link-btn" href="/">Change name</a>'
+        : '<button type="button" class="link-btn" id="logout">Sign out</button>'}
     </div>`;
   document.body.prepend(header);
-  header.querySelector('#logout').onclick = async () => {
+  header.querySelector('#logout')?.addEventListener('click', async () => {
     const pending = await outbox.count().catch(() => 0);
     if (pending && !confirm(`${pending} reading(s) have not been synced yet and will stay on this phone. Sign out anyway?`)) return;
     session.clear();
     location.href = '/';
-  };
+  });
   header.querySelector('#sync-pill').onclick = () => syncNow({ manual: true });
   updateSyncPill();
   return header;

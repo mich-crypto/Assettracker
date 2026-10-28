@@ -4,6 +4,11 @@
   "main": "src/index.js",
   "compatibility_date": "2026-09-01",
   "observability": { "enabled": true },
+  "vars": {
+    // "open": no logins, anyone with the URL can use every screen.
+    // Set to "login" to require accounts (then SESSION_SECRET and SETUP_KEY are needed).
+    "AUTH_MODE": "open"
+  },
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
@@ -18,7 +23,7 @@
       "migrations_dir": "migrations"
     }
   ]
-  // Secrets (set with `npx wrangler secret put <NAME>`):
+  // Secrets, only needed when AUTH_MODE is "login" (set with `npx wrangler secret put <NAME>`):
   //   SESSION_SECRET  random string, >= 32 chars, signs login sessions
   //   SETUP_KEY       one-time key to create the first admin account
 }

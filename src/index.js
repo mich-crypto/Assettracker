@@ -8,7 +8,14 @@ const SECURITY_HEADERS = {
   'x-frame-options': 'DENY',
 };
 
+// AUTH_MODE=open: no logins, every request acts as an admin. Readings then
+// carry the name typed on the phone (recorded_by) instead of a user account.
+const OPEN_USER = { id: null, username: 'open', name: 'Open access', role: 'admin', open: true };
+
+const isOpenMode = (env) => env.AUTH_MODE === 'open';
+
 async function currentUser(request, env) {
+  if (isOpenMode(env)) return OPEN_USER;
   const header = request.headers.get('authorization') || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
   const session = await verifySession(token, env.SESSION_SECRET);
@@ -20,7 +27,7 @@ async function currentUser(request, env) {
 }
 
 async function handleApi(request, env, ctx) {
-  if (!env.SESSION_SECRET || env.SESSION_SECRET.length < 32) {
+  if (!isOpenMode(env) && (!env.SESSION_SECRET || env.SESSION_SECRET.length < 32)) {
     return json({ error: 'Server misconfigured: SESSION_SECRET must be set (at least 32 characters)' }, 500);
   }
   const url = new URL(request.url);

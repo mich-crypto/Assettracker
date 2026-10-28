@@ -75,7 +75,17 @@ types). No code or schema change is needed. The generator type ships with:
 To add, say, compressors or welding machines, create a new type with its own fields. To
 start recording oil level on generators, add a field to the generator type.
 
-## Roles
+## Access (no login for now)
+
+`wrangler.jsonc` sets `"AUTH_MODE": "open"`: there are **no logins**. Anyone with the URL can
+use every screen. The landing page asks for a name once per phone, and that name is saved
+with each reading so the overview still shows who scanned what.
+
+To require accounts later, set `"AUTH_MODE": "login"`, set the `SESSION_SECRET` and
+`SETUP_KEY` secrets, and redeploy. Phones that were in open mode are sent to the sign-in
+page on their next sync, and their queued readings are kept. Roles then apply as below.
+
+## Roles (login mode)
 
 | Role | Overview | Link tags | Scan | Locations | Users / types |
 |---|:-:|:-:|:-:|:-:|:-:|
@@ -91,15 +101,16 @@ npm install
 npx wrangler login
 # D1 database "assetdatabase" already exists and is configured in wrangler.jsonc
 npm run db:migrate:remote
-npx wrangler secret put SESSION_SECRET       # e.g. output of: openssl rand -base64 48
-npx wrangler secret put SETUP_KEY            # one-time key to create the first admin
+npx wrangler d1 execute assetdatabase --remote --file=seed/demo.sql   # optional demo data
 npm run deploy
 ```
 
-Open the site, enter the `SETUP_KEY` to create the admin account, then:
+Open the site, enter your name, then:
 1. Setup → import the WTG coordinates (CSV `name,lat,lon`) and add the SOV(s).
-2. Setup → add users (supervisors, technicians, managers).
-3. Link tags → register generators and print or write their tags.
+2. Link tags → register generators and print or write their tags.
+
+(Login mode only: first run `npx wrangler secret put SESSION_SECRET` and
+`npx wrangler secret put SETUP_KEY`, create the admin with the setup key, then add users under Setup.)
 
 Technicians should open `/field` once while online and use **Add to Home screen**.
 
@@ -115,7 +126,7 @@ npm install
 cp .dev.vars.example .dev.vars
 npm run db:migrate:local
 npm run db:seed:local        # optional: demo wind farm (12 WTGs + 1 SOV)
-npm run dev                  # http://localhost:8787, setup key: dev-setup-key
+npm run dev                  # http://localhost:8787 (open mode; add --var AUTH_MODE:login to test logins, setup key: dev-setup-key)
 npm test                     # unit tests for location resolution and field validation
 ```
 
@@ -143,7 +154,7 @@ test/               node:test unit tests
 
 ## API summary
 
-All endpoints except auth require `Authorization: Bearer <token>`.
+In login mode, all endpoints except auth require `Authorization: Bearer <token>`. In open mode no token is needed.
 
 | Method | Path | Notes |
 |---|---|---|

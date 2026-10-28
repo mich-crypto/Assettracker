@@ -5,6 +5,7 @@ import { validateFieldDefs } from './fields.js';
 const user = requireLogin('locations');
 const $ = (id) => document.getElementById(id);
 const isAdmin = user?.role === 'admin';
+const openMode = !!user?.open; // no logins: user accounts are not used
 
 let types = [];
 
@@ -17,13 +18,16 @@ async function init() {
   $('btn-import').onclick = onImport;
   await loadLocations();
   if (isAdmin) {
-    $('users-card').classList.remove('hidden');
     $('types-card').classList.remove('hidden');
-    $('user-form').onsubmit = onAddUser;
     $('t-select').onchange = showType;
     $('t-new').onclick = newType;
     $('t-save').onclick = saveType;
-    await Promise.all([loadUsers(), loadTypes()]);
+    await loadTypes();
+    if (!openMode) {
+      $('users-card').classList.remove('hidden');
+      $('user-form').onsubmit = onAddUser;
+      await loadUsers();
+    }
   }
 }
 

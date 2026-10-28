@@ -33,6 +33,20 @@
       <button class="btn btn-primary btn-big" type="submit">Create admin</button>
     </form>
 
+    <form id="open" class="card hidden">
+      <div class="field">
+        <label for="o-name">Your name <span class="req">*</span></label>
+        <input id="o-name" name="name" type="text" autocomplete="name" required maxlength="100" placeholder="Saved with your readings">
+        <div class="field-error" id="open-error"></div>
+      </div>
+      <div class="stack">
+        <button class="btn btn-primary btn-big" type="submit" value="/field">Scan asset <span class="muted" style="color:inherit;font-weight:400">· technicians</span></button>
+        <button class="btn btn-big" type="submit" value="/link">Link tags <span class="muted">· warehouse</span></button>
+        <button class="btn btn-big" type="submit" value="/overview">Overview <span class="muted">· site manager</span></button>
+        <button class="btn btn-big" type="submit" value="/admin">Setup <span class="muted">· locations &amp; equipment types</span></button>
+      </div>
+    </form>
+
     <div id="offline" class="notice notice-warn hidden">You are offline. Sign in once while connected; after that the Scan page works offline.</div>
   </main>
   <script type="module">
@@ -41,9 +55,29 @@
     const next = new URLSearchParams(location.search).get('next');
     const go = (user) => location.replace(next && next.startsWith('/') && !next.startsWith('//') ? next : homeFor(user));
 
-    if (session.token && session.user) go(session.user);
+    const openForm = document.getElementById('open');
+    function showOpen() {
+      openForm.name.value = session.user?.open ? session.user.name : '';
+      openForm.classList.remove('hidden');
+    }
+    openForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const name = openForm.name.value.trim();
+      if (!name) {
+        document.getElementById('open-error').textContent = 'Enter your name so readings show who recorded them.';
+        return openForm.name.focus();
+      }
+      session.setOpen(name);
+      location.href = next && next.startsWith('/') && !next.startsWith('//') ? next : e.submitter?.value || '/field';
+    });
+
+    if (session.user?.open) {
+      // No-login mode: go straight on when sent here from a page, otherwise offer the screens.
+      if (next) go(session.user); else showOpen();
+    } else if (session.token && session.user) go(session.user);
     else {
-      api('/api/auth/status').then(({ needsSetup }) => {
+      api('/api/auth/status').then(({ open, needsSetup }) => {
+        if (open) return showOpen();
         document.getElementById(needsSetup ? 'setup' : 'login').classList.remove('hidden');
       }).catch(() => {
         document.getElementById('login').classList.remove('hidden');

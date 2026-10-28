@@ -47,8 +47,9 @@ const ASSET_SELECT = `
 // ---------------------------------------------------------------- auth
 
 router.add('GET', '/api/auth/status', async ({ env }) => {
+  if (env.AUTH_MODE === 'open') return json({ open: true, needsSetup: false });
   const row = await env.DB.prepare('SELECT COUNT(*) AS n FROM users').first();
-  return json({ needsSetup: row.n === 0 });
+  return json({ open: false, needsSetup: row.n === 0 });
 });
 
 // Creates the first admin. Only works while there are no users, and only with
@@ -283,7 +284,7 @@ router.add('GET', '/api/assets', async ({ env, user, url }) => {
       (SELECT group_concat(t.code || char(30) || t.kind, char(31)) FROM tags t WHERE t.asset_id = a.id) AS tag_codes,
       l.id AS r_id, l.recorded_at AS r_recorded_at, l.location_id AS r_location_id, l.location_source AS r_location_source,
       l.gps_status AS r_gps_status, l.lat AS r_lat, l.lon AS r_lon, l.accuracy_m AS r_accuracy_m, l.data AS r_data,
-      l.notes AS r_notes, u.name AS r_user_name,
+      l.notes AS r_notes, COALESCE(u.name, l.recorded_by) AS r_user_name,
       loc.name AS r_location_name, loc.kind AS r_location_kind, loc.lat AS r_location_lat, loc.lon AS r_location_lon
     FROM assets a
     LEFT JOIN latest l ON l.asset_id = a.id AND l.rn = 1
@@ -312,7 +313,7 @@ router.add('GET', '/api/assets/:id', async ({ env, user, params, url }) => {
   if (!asset) throw new HttpError(404, 'Asset not found');
   const limit = Math.min(Number(url.searchParams.get('limit')) || 200, 1000);
   const { results } = await env.DB.prepare(
-    `SELECT r.*, u.name AS user_name, l.name AS location_name, l.kind AS location_kind
+    `SELECT r.*, COALESCE(u.name, r.recorded_by) AS user_name, l.name AS location_name, l.kind AS location_kind
      FROM readings r LEFT JOIN users u ON u.id = r.user_id LEFT JOIN locations l ON l.id = r.location_id
      WHERE r.asset_id = ? ORDER BY r.recorded_at DESC LIMIT ?`,
   ).bind(params.id, limit).all();
@@ -452,14 +453,14 @@ router.add('POST', '/api/readings/sync', async ({ request, env, user }) => {
       stmts.push(
         env.DB.prepare(
           `INSERT OR IGNORE INTO readings
-            (id, asset_id, recorded_at, user_id, location_id, location_source, gps_status, lat, lon, accuracy_m, distance_m, data, notes, tag_code, device_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            (id, asset_id, recorded_at, user_id, location_id, location_source, gps_status, lat, lon, accuracy_m, distance_m, data, notes, tag_code, device_id, recorded_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).bind(
           id, asset.id, recordedAt.toISOString(), user.id, raw.location_id, source, gpsStatus,
           num(raw.lat, { min: -90, max: 90, name: 'lat' }), num(raw.lon, { min: -180, max: 180, name: 'lon' }),
           num(raw.accuracy_m, { min: 0, name: 'accuracy' }), num(raw.distance_m, { min: 0, name: 'distance' }),
           JSON.stringify(values), str(raw.notes, { max: 2000, name: 'notes' }), str(raw.tag_code, { max: 120 }),
-          str(raw.device_id, { max: 80 }),
+          str(raw.device_id, { max: 80 }), user.id ? user.name : str(raw.recorded_by, { max: 100 }),
         ),
       );
       pending.push(id);
@@ -485,7 +486,7 @@ router.add('GET', '/api/readings', async ({ env, user, url }) => {
   if (p.get('to')) { where.push('r.recorded_at <= ?'); vals.push(p.get('to')); }
   const limit = Math.min(Number(p.get('limit')) || 500, 5000);
   const { results } = await env.DB.prepare(
-    `SELECT r.*, a.serial, a.type_id, a.name AS asset_name, u.name AS user_name, l.name AS location_name, l.kind AS location_kind
+    `SELECT r.*, a.serial, a.type_id, a.name AS asset_name, COALESCE(u.name, r.recorded_by) AS user_name, l.name AS location_name, l.kind AS location_kind
      FROM readings r JOIN assets a ON a.id = r.asset_id
      LEFT JOIN users u ON u.id = r.user_id LEFT JOIN locations l ON l.id = r.location_id
      ${where.length ? `WHERE ${where.join(' AND ')}` : ''}

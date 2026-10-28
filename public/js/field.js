@@ -293,6 +293,7 @@ async function onSave(e) {
     data: values,
     notes: $('notes').value.trim() || null,
     device_id: deviceId(),
+    recorded_by: user.name,
     // Local-only display label; stripped before upload.
     label: `${current.asset?.serial ?? current.code} @ ${chosenLocation.name}`,
   };
