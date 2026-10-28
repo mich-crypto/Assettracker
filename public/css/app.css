@@ -229,3 +229,18 @@ tbody tr.clickable:hover { background: var(--surface-2); }
 .toast { padding: 10px 14px; border-radius: 10px; background: #13202b; color: #fff; box-shadow: 0 4px 14px rgb(0 0 0 / 25%); }
 .toast-ok { background: #17663f; }
 .toast-error { background: #9b1c13; }
+
+/* ---------- equipment type editor */
+.fdef { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; background: var(--surface); }
+.fdef .row { align-items: end; }
+.fdef .field { margin-bottom: 10px; }
+.fdef-head { display: flex; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.fdef-head b { font-size: .95rem; }
+.fdef-tools { display: flex; gap: 2px; }
+.fdef-tools button { min-width: 36px; min-height: 36px; }
+.fdef .small input, .fdef .small select { min-width: 0; }
+.fdef .small { flex: 1 1 90px; }
+.check-inline { display: inline-flex; gap: 8px; align-items: center; min-height: 44px; font-weight: 600; }
+.check-inline input { width: 20px; height: 20px; }
+.preview { border: 1px dashed var(--border); border-radius: var(--radius); padding: 12px; background: var(--bg); }
+.preview-cap { font-size: .8rem; text-transform: uppercase; letter-spacing: .03em; margin: 4px 0 8px; }

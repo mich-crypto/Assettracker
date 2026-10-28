@@ -55,25 +55,21 @@ status, the raw fix, its accuracy and the distance to the WTG. The overview show
 
 ## Extending to other equipment
 
-Equipment data is defined per **asset type** as a list of fields (Setup → Equipment
-types). No code or schema change is needed. The generator type ships with:
+Go to **Setup → Equipment types** and click **+ New equipment type**, or pick an existing
+type to change it. No code, JSON or database change is needed. For each field you choose:
 
-```json
-[
-  {"key":"kva","label":"Rating","type":"select","scope":"asset","required":true,"options":["30 kVA","350 kVA"]},
-  {"key":"fuel_level","label":"Fuel level","type":"number","scope":"check","required":true,"min":0,"max":100,"unit":"%","alert":{"below":25}},
-  {"key":"fuel_cube","label":"Fuel cube connected","type":"boolean","scope":"check","required":true},
-  {"key":"alarms","label":"Active alarms","type":"multiselect","scope":"check","options":["Low fuel","..."],"alert":{"any":true}}
-]
-```
+* **Question / label**, e.g. "Lamps working".
+* **Answer type**: Number, Text, Yes / No, Choose one, Choose several, or Date.
+* **Asked**: on every scan (fuel level, alarms) or once when linking the tag (kVA rating, manufacturer).
+* **Required**, and for numbers the unit, min, max and **steps of**. For example, steps of
+  25 between 0 and 100 shows 0 / 25 / 50 / 75 / 100 % buttons.
+* **Flag on overview when**: the value is at or below / below / above a number, or a
+  given answer is picked, or any alarm is ticked.
 
-* `scope: "asset"` fields are filled in once when linking. `scope: "check"` fields are asked on every scan.
-* Field types: `number`, `text`, `boolean`, `select`, `multiselect`, `date`.
-* `alert` rules (`below`, `above`, `equals`, `any`) flag the asset on the overview.
-* The same validation code (`public/js/fields.js`) runs on the phone and on the server.
-
-To add, say, compressors or welding machines, create a new type with its own fields. To
-start recording oil level on generators, add a field to the generator type.
+**+ Add common field** inserts ready-made fields: fuel level, running hours, condition OK,
+alarms, manufacturer and next inspection date. A live preview shows the link and scan
+forms as they will appear on the phone. Each field gets a data key from its label. The key
+never changes, even if the label is renamed later, so past readings stay linked to it.
 
 ## Access (no login for now)
 
