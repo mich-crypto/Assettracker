@@ -1,0 +1,14 @@
+{
+  "name": "AssetTracker",
+  "short_name": "Assets",
+  "description": "Scan generator QR / NFC tags and record location, fuel and alarms - works offline.",
+  "start_url": "/field",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f3f5f7",
+  "theme_color": "#0b5cad",
+  "icons": [
+    { "src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icons/icon-maskable.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

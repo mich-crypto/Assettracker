@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Setup · AssetTracker</title>
+  <meta name="theme-color" content="#0b5cad">
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <main>
+    <h1>Setup</h1>
+
+    <section class="card" id="locations-card">
+      <h2>Locations</h2>
+      <p class="muted">Turbines (WTG) need their surveyed position; the field app uses it to confirm where a technician is. The GPS radius is how close a phone must be to count as "at" the turbine. Vessels (SOV) need no position.</p>
+      <form id="loc-form" class="row" style="align-items:end">
+        <div class="field"><label for="l-kind">Kind</label><select id="l-kind" name="kind"><option>WTG</option><option>SOV</option></select></div>
+        <div class="field grow"><label for="l-name">Name</label><input id="l-name" name="name" type="text" required placeholder="e.g. WTG A01"></div>
+        <div class="field"><label for="l-lat">Latitude</label><input id="l-lat" name="lat" type="number" step="any" placeholder="54.0123"></div>
+        <div class="field"><label for="l-lon">Longitude</label><input id="l-lon" name="lon" type="number" step="any" placeholder="6.5432"></div>
+        <div class="field"><label for="l-rad">GPS radius (m)</label><input id="l-rad" name="radius_m" type="number" value="300" min="10"></div>
+        <div class="field"><button class="btn btn-primary" type="submit">Add</button></div>
+      </form>
+      <details style="margin-bottom:12px">
+        <summary>Import from CSV (name, lat, lon[, kind, radius_m])</summary>
+        <p class="muted">One location per line. Existing names are updated. Example:<br><code>WTG A01,54.0123,6.5432</code></p>
+        <textarea id="csv" rows="6" placeholder="name,lat,lon"></textarea>
+        <div class="field-error" id="csv-error"></div>
+        <button class="btn" id="btn-import" type="button" style="margin-top:8px">Import</button>
+      </details>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Name</th><th>Kind</th><th>Position</th><th>Radius</th><th></th></tr></thead>
+        <tbody id="loc-rows"></tbody>
+      </table></div>
+    </section>
+
+    <section class="card hidden" id="users-card">
+      <h2>Users</h2>
+      <p class="muted"><b>Manager</b>: overview. <b>Supervisor</b>: link tags, scan, overview, locations. <b>Technician</b>: scan only. <b>Admin</b>: everything.</p>
+      <form id="user-form" class="row" style="align-items:end">
+        <div class="field grow"><label for="u-name">Name</label><input id="u-name" name="name" type="text" required></div>
+        <div class="field"><label for="u-user">Username</label><input id="u-user" name="username" type="text" autocapitalize="none" required></div>
+        <div class="field"><label for="u-role">Role</label><select id="u-role" name="role"><option>technician</option><option>supervisor</option><option>manager</option><option>admin</option></select></div>
+        <div class="field"><label for="u-pass">Password</label><input id="u-pass" name="password" type="password" minlength="8" autocomplete="new-password" required></div>
+        <div class="field"><button class="btn btn-primary" type="submit">Add user</button></div>
+      </form>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Status</th><th></th></tr></thead>
+        <tbody id="user-rows"></tbody>
+      </table></div>
+    </section>
+
+    <section class="card hidden" id="types-card">
+      <h2>Equipment types &amp; fields</h2>
+      <p class="muted">Each type defines its own data. <code>scope: "asset"</code> fields are filled in once when linking (e.g. kVA rating); <code>scope: "check"</code> fields are asked on every scan (e.g. fuel level). Field types: number, text, boolean, select, multiselect, date. Optional: <code>required</code>, <code>min</code>, <code>max</code>, <code>unit</code>, <code>options</code>, and an <code>alert</code> rule (<code>{"below": 25}</code>, <code>{"above": 90}</code>, <code>{"equals": true}</code>, <code>{"any": true}</code>) that flags the asset on the overview.</p>
+      <div class="row" style="margin-bottom:10px">
+        <select id="t-select" aria-label="Type to edit"></select>
+        <button class="btn" type="button" id="t-new">New type</button>
+      </div>
+      <div class="field"><label for="t-name">Name</label><input id="t-name" type="text"></div>
+      <div class="field"><label for="t-fields">Fields (JSON)</label><textarea id="t-fields" rows="16" class="mono" spellcheck="false"></textarea></div>
+      <div class="field-error" id="t-error"></div>
+      <button class="btn btn-primary" type="button" id="t-save">Save type</button>
+      <p class="muted">Existing readings keep the values they were captured with; removing a field only hides it from new forms.</p>
+    </section>
+  </main>
+  <script type="module" src="/js/admin.js"></script>
+</body>
+</html>

@@ -1,0 +1,2 @@
+SESSION_SECRET=dev-only-secret-change-me-0123456789abcdef
+SETUP_KEY=dev-setup-key

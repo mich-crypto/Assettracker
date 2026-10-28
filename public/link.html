@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Link tags · AssetTracker</title>
+  <meta name="theme-color" content="#0b5cad">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <main>
+    <div class="grid-2" style="align-items:start">
+      <form id="asset-form" class="card" novalidate>
+        <div class="row" style="justify-content:space-between">
+          <h1 id="form-title" style="margin:0">Link new asset</h1>
+          <button type="button" class="link-btn hidden" id="btn-new">+ New asset</button>
+        </div>
+        <p class="muted">Assign a QR label and/or NFC tag to a piece of equipment.</p>
+        <div class="field">
+          <label for="type">Equipment type <span class="req">*</span></label>
+          <select id="type" name="type_id" required></select>
+        </div>
+        <div class="field">
+          <label for="serial">Serial number <span class="req">*</span></label>
+          <input id="serial" name="serial" type="text" required autocapitalize="characters">
+          <div class="field-error" data-error-for="serial"></div>
+        </div>
+        <div class="field">
+          <label for="name">Name / fleet number <span class="muted">(optional)</span></label>
+          <input id="name" name="name" type="text">
+        </div>
+        <div id="attr-fields"></div>
+
+        <h3>Tags</h3>
+        <div id="tags" class="stack"></div>
+        <div class="row" style="margin:12px 0">
+          <button type="button" class="btn" id="btn-gen">Generate QR</button>
+          <button type="button" class="btn" id="btn-scan">Scan existing QR</button>
+          <button type="button" class="btn hidden" id="btn-nfc-read">Read NFC tag</button>
+        </div>
+        <div class="field-error" id="form-error"></div>
+        <div class="row">
+          <button class="btn btn-primary" type="submit" id="btn-save">Save asset</button>
+          <button class="btn btn-danger hidden" type="button" id="btn-retire">Retire asset</button>
+        </div>
+      </form>
+
+      <div>
+        <div class="card print-area hidden" id="label-card">
+          <div class="row" style="justify-content:space-between">
+            <h2 style="margin:0">Labels</h2>
+            <button type="button" class="btn" onclick="window.print()">Print</button>
+          </div>
+          <div id="labels" class="row" style="margin-top:12px"></div>
+        </div>
+        <div class="card">
+          <h2>Assets</h2>
+          <input id="search" type="search" placeholder="Search serial, name or tag" aria-label="Search assets">
+          <div class="table-wrap" style="margin-top:10px">
+            <table>
+              <thead><tr><th>Serial</th><th>Type</th><th>Tags</th></tr></thead>
+              <tbody id="asset-rows"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+  <script src="/vendor/qrcode.js"></script>
+  <script src="/vendor/jsQR.js" defer></script>
+  <script type="module" src="/js/link.js"></script>
+</body>
+</html>

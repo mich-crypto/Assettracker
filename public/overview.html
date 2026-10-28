@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Overview · AssetTracker</title>
+  <meta name="theme-color" content="#0b5cad">
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <main>
+    <div class="row" style="justify-content:space-between;margin-bottom:12px">
+      <h1 style="margin:0">Asset overview</h1>
+      <div class="row">
+        <span class="muted" id="updated"></span>
+        <button class="btn" id="btn-csv" type="button">Export readings (CSV)</button>
+      </div>
+    </div>
+    <div class="kpis" id="kpis"></div>
+    <div class="card"><div id="map" role="region" aria-label="Map of asset locations"></div></div>
+    <div class="card">
+      <div class="row" style="margin-bottom:10px">
+        <input class="grow" id="q" type="search" placeholder="Search serial, name, location" aria-label="Search">
+        <select id="f-type" aria-label="Equipment type"><option value="">All types</option></select>
+        <select id="f-where" aria-label="Location kind">
+          <option value="">All locations</option><option value="WTG">On turbines (WTG)</option><option value="SOV">On vessel (SOV)</option><option value="none">Never scanned</option>
+        </select>
+        <label class="row" style="gap:6px"><input type="checkbox" id="f-alert"> Alerts only</label>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Asset</th><th>Location</th><th>Last check</th><th>Alerts</th><th>Last scan</th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+  <aside class="drawer hidden" id="drawer" aria-labelledby="d-title"></aside>
+  <script src="/vendor/leaflet/leaflet.js"></script>
+  <script type="module" src="/js/overview.js"></script>
+</body>
+</html>

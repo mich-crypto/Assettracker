@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "assettracker",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-01",
+  "observability": { "enabled": true },
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "404-page",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "assettracker",
+      // Replace with the id printed by: npx wrangler d1 create assettracker
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ]
+  // Secrets (set with `npx wrangler secret put <NAME>`):
+  //   SESSION_SECRET  random string, >= 32 chars, signs login sessions
+  //   SETUP_KEY       one-time key to create the first admin account
+}

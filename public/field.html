@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Scan · AssetTracker</title>
+  <meta name="theme-color" content="#0b5cad">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icons/icon.svg">
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <main class="narrow">
+    <!-- Step 1: identify the asset -->
+    <section id="scan-view">
+      <div class="card stack">
+        <h1>Scan asset</h1>
+        <button class="btn btn-primary btn-big" id="btn-qr" type="button">Scan QR code</button>
+        <button class="btn btn-big hidden" id="btn-nfc" type="button">Read NFC tag</button>
+        <form id="manual-code" class="row">
+          <input class="grow" name="code" type="text" placeholder="…or type tag code / serial" autocapitalize="characters" aria-label="Tag code or serial number">
+          <button class="btn" type="submit">Go</button>
+        </form>
+        <p class="muted" id="gps-warm" aria-live="polite"></p>
+      </div>
+      <div class="card">
+        <div class="row" style="justify-content:space-between"><h2 style="margin:0">Waiting to sync</h2><button class="btn" id="btn-sync" type="button">Sync now</button></div>
+        <div id="outbox" class="muted" style="margin-top:8px">Nothing queued.</div>
+      </div>
+      <p class="muted" id="data-age"></p>
+    </section>
+
+    <!-- Step 2: record the reading -->
+    <section id="reading-view" class="hidden">
+      <form id="reading-form" novalidate>
+        <div class="card">
+          <div class="asset-head">
+            <div><h2 id="a-title"></h2><div class="muted" id="a-sub"></div></div>
+            <button type="button" class="link-btn" id="btn-cancel">Cancel</button>
+          </div>
+          <dl class="kv" id="a-attrs" style="margin-top:10px"></dl>
+          <div id="a-unknown" class="notice notice-warn hidden" style="margin-top:10px"></div>
+        </div>
+
+        <div class="card">
+          <h3>Location</h3>
+          <div class="loc-box" id="loc-box">
+            <div class="muted" id="loc-status">Getting GPS position…</div>
+            <div class="loc-name" id="loc-name"></div>
+            <div class="muted" id="loc-detail"></div>
+            <button type="button" class="link-btn hidden" id="btn-loc-change">Change location</button>
+            <button type="button" class="link-btn" id="btn-loc-manual">Enter manually</button>
+          </div>
+          <div id="loc-manual" class="hidden">
+            <div class="field">
+              <label for="loc-filter">Select location <span class="req">*</span></label>
+              <input id="loc-filter" type="search" placeholder="Filter, e.g. WTG 12 or vessel name">
+            </div>
+            <div class="field">
+              <select id="loc-select" size="6" aria-label="Location"></select>
+              <div class="field-error" id="loc-error"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Check</h3>
+          <div id="check-fields"></div>
+          <div class="field"><label for="notes">Notes</label><textarea id="notes" name="__notes" placeholder="Optional"></textarea></div>
+        </div>
+        <button class="btn btn-primary btn-big" type="submit" id="btn-save">Save reading</button>
+        <p class="muted" style="text-align:center">Saved on this phone first, then synced when there is a connection.</p>
+      </form>
+    </section>
+  </main>
+  <script src="/vendor/jsQR.js" defer></script>
+  <script type="module" src="/js/field.js"></script>
+</body>
+</html>
