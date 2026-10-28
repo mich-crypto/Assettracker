@@ -131,6 +131,7 @@ const TYPE_LABELS = {
 
 const PRESETS = {
   fuel: { label: 'Fuel level', type: 'number', scope: 'check', required: true, min: 0, max: 100, step: 25, unit: '%', alert: { atMost: 25 } },
+  cube: { label: 'Fuel cube connected', type: 'boolean', scope: 'check', required: true, sovValue: false },
   hours: { label: 'Running hours', type: 'number', scope: 'check', min: 0, unit: 'h' },
   ok: { label: 'Condition OK', type: 'boolean', scope: 'check', required: true, alert: { equals: false } },
   alarms: { label: 'Active alarms', type: 'multiselect', scope: 'check', options: ['Fault', 'Damage', 'Other'], alert: { any: true } },
@@ -248,6 +249,11 @@ function fieldCard(f, i) {
       <div class="field small"><label>Max</label><input data-k="max" type="number" step="any" value="${numAttr(f.max)}"></div>
       <div class="field small"><label>Steps of</label><input data-k="step" type="number" step="any" min="0" value="${numAttr(f.step)}" placeholder="any"></div>
     </div>` : ''}
+    ${f.type === 'boolean' && f.scope === 'check' ? `<div class="field"><label>On the vessel (SOV)</label><select data-k="sovValue">
+      <option value=""${'sovValue' in f ? '' : ' selected'}>Ask as usual</option>
+      <option value="false"${f.sovValue === false ? ' selected' : ''}>Don't ask - always No</option>
+      <option value="true"${f.sovValue === true ? ' selected' : ''}>Don't ask - always Yes</option>
+    </select></div>` : ''}
     ${alertControls(f)}
     ${f.key ? `<p class="muted" style="margin:0;font-size:.8rem">Data key: <code>${esc(f.key)}</code></p>` : ''}
   </div>`;
@@ -270,7 +276,7 @@ function renderDraft() {
     }));
     card.querySelectorAll('[data-k]').forEach((el) => {
       // Changes that alter which inputs are shown re-render the card list.
-      const structural = ['type', 'alertMode', 'options'].includes(el.dataset.k);
+      const structural = ['type', 'scope', 'alertMode', 'options'].includes(el.dataset.k);
       el.addEventListener(el.tagName === 'SELECT' || el.type === 'checkbox' ? 'change' : 'input', () => {
         updateField(draft[i], el.dataset.k, el.type === 'checkbox' ? el.checked : el.value);
         if (el.dataset.k === 'label') card.querySelector('.fdef-head b').textContent = `${i + 1}. ${el.value || 'New field'}`;
@@ -292,7 +298,7 @@ function updateField(f, k, v) {
   const num = (x) => (x === '' || x == null ? undefined : Number(x));
   switch (k) {
     case 'label': f.label = v; break;
-    case 'scope': f.scope = v; break;
+    case 'scope': f.scope = v; if (v !== 'check') delete f.sovValue; break;
     case 'required': if (v) f.required = true; else delete f.required; break;
     case 'type':
       f.type = v;
@@ -300,7 +306,9 @@ function updateField(f, k, v) {
       else delete f.options;
       if (v !== 'number') for (const x of ['unit', 'min', 'max', 'step']) delete f[x];
       delete f.alert;
+      delete f.sovValue;
       break;
+    case 'sovValue': if (v === '') delete f.sovValue; else f.sovValue = v === 'true'; break;
     case 'options': f.options = parseOptions(v); break;
     case 'unit': if (v.trim()) f.unit = v.trim(); else delete f.unit; break;
     case 'min': case 'max': case 'step': {

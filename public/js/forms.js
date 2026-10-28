@@ -35,7 +35,7 @@ function fieldHtml(f, value) {
         // Few fixed steps (e.g. fuel 0/25/50/75/100 %): big tap targets instead of typing.
         input = `<div class="segmented segmented-wide" role="radiogroup" aria-labelledby="${id}_l">${choices.map((c, i) =>
           `<label><input type="radio" name="${f.key}" value="${c}"${value === c ? ' checked' : ''}${req && i === 0 ? req : ''}><span>${c}${f.unit === '%' ? '%' : ''}</span></label>`).join('')}</div>`;
-        return `<fieldset class="field"><legend id="${id}_l">${label}</legend>${input}<div class="field-error" data-error-for="${f.key}"></div></fieldset>`;
+        return `<fieldset class="field" data-field="${f.key}"><legend id="${id}_l">${label}</legend>${input}<div class="field-error" data-error-for="${f.key}"></div></fieldset>`;
       }
       const attrs = `${f.min != null ? ` min="${f.min}"` : ''}${f.max != null ? ` max="${f.max}"` : ''}`;
       const slider = f.min != null && f.max != null && f.max - f.min <= 1000
@@ -48,7 +48,7 @@ function fieldHtml(f, value) {
         <label><input type="radio" name="${f.key}" value="true"${value === true ? ' checked' : ''}${req}><span>Yes</span></label>
         <label><input type="radio" name="${f.key}" value="false"${value === false ? ' checked' : ''}><span>No</span></label>
       </div>`;
-      return `<fieldset class="field"><legend id="${id}_l">${label}</legend>${input}<div class="field-error" data-error-for="${f.key}"></div></fieldset>`;
+      return `<fieldset class="field" data-field="${f.key}"><legend id="${id}_l">${label}</legend>${input}<div class="field-error" data-error-for="${f.key}"></div></fieldset>`;
     case 'select':
       input = `<select id="${id}" name="${f.key}"${req}><option value="">Select…</option>${f.options.map((o) =>
         `<option${o === value ? ' selected' : ''}>${esc(o)}</option>`).join('')}</select>`;
@@ -56,14 +56,14 @@ function fieldHtml(f, value) {
     case 'multiselect':
       input = `<div class="chips">${f.options.map((o) =>
         `<label class="chip"><input type="checkbox" name="${f.key}" value="${esc(o)}"${(value || []).includes(o) ? ' checked' : ''}><span>${esc(o)}</span></label>`).join('')}</div>`;
-      return `<fieldset class="field"><legend>${label}</legend>${input}<div class="field-error" data-error-for="${f.key}"></div></fieldset>`;
+      return `<fieldset class="field" data-field="${f.key}"><legend>${label}</legend>${input}<div class="field-error" data-error-for="${f.key}"></div></fieldset>`;
     case 'date':
       input = `<input id="${id}" name="${f.key}" type="date"${req} value="${esc(value ?? '')}">`;
       break;
     default:
       input = `<input id="${id}" name="${f.key}" type="text"${req} value="${esc(value ?? '')}">`;
   }
-  return `<div class="field"><label for="${id}">${label}</label>${input}<div class="field-error" data-error-for="${f.key}"></div></div>`;
+  return `<div class="field" data-field="${f.key}"><label for="${id}">${label}</label>${input}<div class="field-error" data-error-for="${f.key}"></div></div>`;
 }
 
 /** Reads raw values back; validation happens in fields.js normalizeValues. */

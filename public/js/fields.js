@@ -8,6 +8,8 @@
 //   type:  number | text | boolean | select | multiselect | date
 //   scope: asset (set once when linking) | check (captured on every scan)
 //   step:  numbers only, value must be min + k*step (e.g. fuel in 25% steps)
+//   sovValue: yes/no fields only; on the vessel (SOV) the question is not asked
+//          and this value is recorded (e.g. fuel cube: never connected on the SOV)
 //   alert: { below: n } | { atMost: n } | { above: n } | { equals: value } | { any: true }
 
 export const FIELD_TYPES = ['number', 'text', 'boolean', 'select', 'multiselect', 'date'];
@@ -34,6 +36,9 @@ export function validateFieldDefs(defs) {
       errors.push(`${where}: options must be a non-empty list of text values`);
     }
     if (f.step != null && !(typeof f.step === 'number' && f.step > 0)) errors.push(`${where}: step must be a positive number`);
+    if ('sovValue' in f && (f.type !== 'boolean' || typeof f.sovValue !== 'boolean')) {
+      errors.push(`${where}: a fixed vessel answer is only possible for yes/no fields`);
+    }
     for (const k of ['min', 'max']) {
       if (f[k] != null && typeof f[k] !== 'number') errors.push(`${where}: ${k} must be a number`);
     }
@@ -127,4 +132,16 @@ export function formatValue(f, v) {
   if (f.type === 'boolean') return v ? 'Yes' : 'No';
   if (Array.isArray(v)) return v.join(', ');
   return f.unit ? `${v} ${f.unit}` : String(v);
+}
+
+/** Fields that are not asked at this kind of location because their answer is fixed there. */
+export function fixedAt(defs, locationKind) {
+  return locationKind === 'SOV' ? defs.filter((f) => f.scope === 'check' && 'sovValue' in f) : [];
+}
+
+/** Applies location-fixed answers (e.g. fuel cube = No on the SOV) to captured values. */
+export function applyLocationRules(defs, values, locationKind) {
+  const out = { ...values };
+  for (const f of fixedAt(defs, locationKind)) out[f.key] = f.sovValue;
+  return out;
 }

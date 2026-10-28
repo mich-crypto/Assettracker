@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { evaluateAlerts, normalizeValues, validateFieldDefs } from '../public/js/fields.js';
+import { applyLocationRules, evaluateAlerts, fixedAt, normalizeValues, validateFieldDefs } from '../public/js/fields.js';
 
 // The generator definition shipped in the first migration.
 const sql = readFileSync(new URL('../migrations/0001_init.sql', import.meta.url), 'utf8');
@@ -53,4 +53,19 @@ test('current generator type: fuel in 25 % steps, alert at 25 % or less, running
   assert.match(normalizeValues(generatorNow, 'check', { fuel_level: 60, fuel_cube: true }).errors.fuel_level, /steps of 25/);
   assert.deepEqual(evaluateAlerts(generatorNow, { fuel_level: 25, fuel_cube: true }).map((a) => a.key), ['fuel_level']);
   assert.deepEqual(evaluateAlerts(generatorNow, { fuel_level: 50, fuel_cube: true }), []);
+});
+
+test('fuel cube is not asked on the SOV and recorded as No', () => {
+  const defs = generatorNow.map((f) => (f.key === 'fuel_cube' ? { ...f, sovValue: false } : f));
+  assert.deepEqual(validateFieldDefs(defs), []);
+  assert.deepEqual(fixedAt(defs, 'SOV').map((f) => f.key), ['fuel_cube']);
+  assert.deepEqual(fixedAt(defs, 'WTG'), []);
+  // phone sent "yes" (or nothing) while on the vessel -> stored as No
+  const onSov = normalizeValues(defs, 'check', applyLocationRules(defs, { fuel_level: 50, fuel_cube: true }, 'SOV'));
+  assert.deepEqual(onSov.errors, {});
+  assert.equal(onSov.values.fuel_cube, false);
+  assert.equal(normalizeValues(defs, 'check', applyLocationRules(defs, { fuel_level: 50 }, 'SOV')).values.fuel_cube, false);
+  // at a turbine it is still asked and required
+  assert.ok(normalizeValues(defs, 'check', applyLocationRules(defs, { fuel_level: 50 }, 'WTG')).errors.fuel_cube);
+  assert.equal(validateFieldDefs([{ key: 'n', label: 'N', type: 'number', scope: 'check', sovValue: false }]).length, 1);
 });

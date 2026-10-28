@@ -1,6 +1,6 @@
 import { can, hashPassword, ROLES, signSession, verifyPassword } from './auth.js';
 import { HttpError, json, num, parseJsonColumn, readJson, Router, str } from './http.js';
-import { normalizeValues, validateFieldDefs } from '../public/js/fields.js';
+import { applyLocationRules, normalizeValues, validateFieldDefs } from '../public/js/fields.js';
 
 export const router = new Router();
 
@@ -422,12 +422,12 @@ router.add('POST', '/api/readings/sync', async ({ request, env, user }) => {
 
   const [typeRows, locRows, assetRows, tagRows] = await env.DB.batch([
     env.DB.prepare('SELECT * FROM asset_types'),
-    env.DB.prepare('SELECT id FROM locations'),
+    env.DB.prepare('SELECT id, kind FROM locations'),
     env.DB.prepare('SELECT id, type_id FROM assets'),
     env.DB.prepare('SELECT code, asset_id FROM tags'),
   ]);
   const types = new Map(typeRows.results.map((t) => [t.id, typeOut(t)]));
-  const locationIds = new Set(locRows.results.map((l) => l.id));
+  const locationKinds = new Map(locRows.results.map((l) => [l.id, l.kind]));
   const assets = new Map(assetRows.results.map((a) => [a.id, a]));
   const tagIndex = new Map(tagRows.results.map((t) => [t.code.toLowerCase(), t.asset_id]));
 
@@ -446,12 +446,15 @@ router.add('POST', '/api/readings/sync', async ({ request, env, user }) => {
       if (!asset) { reject('Unknown asset / tag not linked'); continue; }
       // No WTG/SOV is fine when the phone's GPS position is the location (shore, train, warehouse).
       const hasFix = Number.isFinite(raw.lat) && Number.isFinite(raw.lon);
-      if (raw.location_id ? !locationIds.has(raw.location_id) : !hasFix) { reject('Unknown or missing location'); continue; }
+      if (raw.location_id ? !locationKinds.has(raw.location_id) : !hasFix) { reject('Unknown or missing location'); continue; }
       const recordedAt = new Date(raw.recorded_at);
       if (Number.isNaN(recordedAt.getTime())) { reject('Invalid recorded_at'); continue; }
       if (recordedAt.getTime() > Date.now() + 24 * 3600 * 1000) { reject('recorded_at is in the future (check phone clock)'); continue; }
       const type = types.get(asset.type_id);
-      const { values, errors } = normalizeValues(type ? type.fields : [], 'check', raw.data);
+      const defs = type ? type.fields : [];
+      // e.g. fuel cube is never connected on the SOV, whatever the phone sent.
+      const data = applyLocationRules(defs, raw.data || {}, locationKinds.get(raw.location_id));
+      const { values, errors } = normalizeValues(defs, 'check', data);
       if (Object.keys(errors).length) { reject(Object.values(errors).join('; ')); continue; }
       const source = raw.location_source === 'gps' ? 'gps' : 'manual';
       const gpsStatus = GPS_STATUSES.includes(raw.gps_status) ? raw.gps_status : 'unavailable';

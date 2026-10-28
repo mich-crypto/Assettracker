@@ -5,7 +5,7 @@ import {
   ago, api, can, deviceId, esc, loadReference, registerServiceWorker, renderHeader, requireLogin,
   startAutoSync, syncNow, toast, updateSyncPill,
 } from './app.js';
-import { evaluateAlerts, normalizeValues } from './fields.js';
+import { applyLocationRules, evaluateAlerts, fixedAt, normalizeValues } from './fields.js';
 import { collectFields, renderFields, showErrors } from './forms.js';
 import { distanceM, resolveLocation } from './geo.js';
 import { nfcSupported, parseTagText, readNfc, scanQr } from './scan.js';
@@ -60,7 +60,7 @@ async function init() {
   $('loc-filter').oninput = fillLocationSelect;
   $('loc-select').onchange = () => {
     const v = $('loc-select').value;
-    chosenLocation = v === HERE.id ? HERE : ref.locations.find((l) => l.id === v) || null;
+    setChosen(v === HERE.id ? HERE : ref.locations.find((l) => l.id === v) || null);
     manualChoice = true;
     $('loc-error').textContent = '';
     $('loc-name').textContent = chosenLocation ? labelFor(chosenLocation) : '';
@@ -110,7 +110,7 @@ const LAST_LOCATION_KEY = 'at.lastLocation';
 function applyTestMode() {
   resolution = null;
   const lastId = localStorage.getItem(LAST_LOCATION_KEY);
-  chosenLocation = ref.locations.find((l) => l.id === lastId) || null;
+  setChosen(ref.locations.find((l) => l.id === lastId) || null);
   manualChoice = !!chosenLocation;
   $('loc-box').className = 'loc-box';
   $('loc-status').textContent = 'Location check off (testing)';
@@ -134,7 +134,7 @@ function applyResolution() {
   $('loc-detail').textContent = resolution.reason;
   if (!manualChoice) {
     // Away from the farm, default to the phone's own position; the user can still pick any WTG / SOV.
-    chosenLocation = resolution.elsewhere && bestFix ? HERE : resolution.requiresManual ? null : resolution.suggestion;
+    setChosen(resolution.elsewhere && bestFix ? HERE : resolution.requiresManual ? null : resolution.suggestion);
   }
   if (resolution.gpsStatus === 'implausible') {
     $('loc-detail').textContent = `${resolution.reason.split(' (')[0]}. Saved at the phone's GPS position - if you are offshore, GPS may be jammed: select the WTG / SOV.`;
@@ -144,6 +144,20 @@ function applyResolution() {
   $('btn-loc-change').classList.toggle('hidden', !chosenLocation);
   $('btn-loc-manual').classList.toggle('hidden', !!chosenLocation);
   if (resolution.requiresManual && chosenLocation !== HERE) showManualPicker(false);
+}
+
+/** Sets the location and hides questions whose answer is fixed there (fuel cube on the SOV). */
+function setChosen(loc) {
+  chosenLocation = loc;
+  if (!current) return;
+  const fixed = new Set(fixedAt(current.type.fields, loc?.kind).map((f) => f.key));
+  $('check-fields').querySelectorAll('[data-field]').forEach((el) => {
+    el.classList.toggle('hidden', fixed.has(el.dataset.field));
+  });
+  const notes = current.type.fields.filter((f) => fixed.has(f.key))
+    .map((f) => `${esc(f.label)}: <b>${f.sovValue ? 'Yes' : 'No'}</b>`);
+  $('fixed-note').innerHTML = notes.length ? `On the vessel: ${notes.join(' · ')}` : '';
+  $('fixed-note').classList.toggle('hidden', !notes.length);
 }
 
 function labelFor(l) {
@@ -267,6 +281,7 @@ function showReading() {
   $('a-unknown').classList.toggle('hidden', !!asset);
   $('a-unknown').textContent = 'This tag is not in the offline asset list. The reading will be matched to its asset when it syncs.';
   renderFields($('check-fields'), type.fields, 'check');
+  setChosen(null);
   $('notes').value = '';
   $('loc-filter').value = '';
   $('loc-manual').classList.add('hidden');
@@ -305,7 +320,8 @@ function closeReading() {
 async function onSave(e) {
   e.preventDefault();
   const form = $('reading-form');
-  const { values, errors } = normalizeValues(current.type.fields, 'check', collectFields(form, current.type.fields, 'check'));
+  const raw = applyLocationRules(current.type.fields, collectFields(form, current.type.fields, 'check'), chosenLocation?.kind);
+  const { values, errors } = normalizeValues(current.type.fields, 'check', raw);
   showErrors(form, errors);
   if (!chosenLocation) {
     $('loc-error').textContent = 'Select where the asset is.';

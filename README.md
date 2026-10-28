@@ -72,6 +72,8 @@ type to change it. No code, JSON or database change is needed. For each field yo
 * **Flag on overview when**: the value is at or below / below / above a number, or a
   given answer is picked, or any alarm is ticked.
 
+Yes / No questions can be fixed **on the vessel (SOV)**. The generator's *Fuel cube connected* is set to "Don't ask - always No", so on the SOV it is hidden and recorded as No. The server enforces this as well.
+
 **+ Add common field** inserts ready-made fields: fuel level, running hours, condition OK,
 alarms, manufacturer and next inspection date. A live preview shows the link and scan
 forms as they will appear on the phone. Each field gets a data key from its label. The key

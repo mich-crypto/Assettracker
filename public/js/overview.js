@@ -1,7 +1,7 @@
 // Site manager overview, organised by location: what equipment is on the vessel
 // and on each turbine, with its latest check values and alerts.
 import { ago, api, esc, fmtTime, registerServiceWorker, renderHeader, requireLogin, toast } from './app.js';
-import { evaluateAlerts, formatValue } from './fields.js';
+import { evaluateAlerts, fixedAt, formatValue } from './fields.js';
 
 const user = requireLogin('overview');
 const $ = (id) => document.getElementById(id);
@@ -146,7 +146,9 @@ function summaryChips(units) {
 }
 
 function unitValues(a) {
-  return a.type.fields.filter((f) => f.scope === 'check' && f.type !== 'multiselect' && a.last.data[f.key] != null)
+  // Answers fixed by the location (fuel cube on the SOV) say nothing, so leave them out.
+  const fixed = new Set(fixedAt(a.type.fields, a.last.location_kind).map((f) => f.key));
+  return a.type.fields.filter((f) => f.scope === 'check' && f.type !== 'multiselect' && !fixed.has(f.key) && a.last.data[f.key] != null)
     .map((f) => `${esc(f.label)} <b>${esc(formatValue(f, a.last.data[f.key]))}</b>`).join(' · ');
 }
 
