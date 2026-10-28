@@ -66,7 +66,8 @@ function filtered() {
   return assets.filter((a) => {
     if (type && a.type_id !== type) return false;
     if (alertsOnly && !a.alerts.length) return false;
-    if (q && !(a.last?.location_name || '').toLowerCase().replace(/\s+/g, '').includes(q)) return false;
+    const where = a.last ? (a.last.location_name || 'elsewhere gps') : '';
+    if (q && !where.toLowerCase().replace(/\s+/g, '').includes(q)) return false;
     return true;
   });
 }
@@ -103,6 +104,10 @@ function render() {
     if (!sovGroups.some((g) => g.location.id === sov.id) && !$('q').value && !$('f-alert').checked) sovGroups.push({ location: sov, units: [] });
   }
   const wtgGroups = groups.filter((g) => g.location.kind === 'WTG').sort(byName);
+  const elsewhere = list.filter((a) => a.last && !a.last.location_id)
+    .sort((x, y) => y.last.recorded_at.localeCompare(x.last.recorded_at));
+  $('elsewhere-section').classList.toggle('hidden', !elsewhere.length);
+  $('elsewhere-cards').innerHTML = elsewhere.length ? elsewhereCard(elsewhere) : '';
   $('sov-cards').innerHTML = sovGroups.map(locationCard).join('') || '<p class="empty-note">No equipment on the vessel matches.</p>';
   $('wtg-cards').innerHTML = wtgGroups.map(locationCard).join('') || '<p class="empty-note">No equipment on turbines matches.</p>';
 
@@ -112,7 +117,25 @@ function render() {
   $('unplaced-list').innerHTML = summaryChips(unplaced);
 
   document.querySelectorAll('.unit[data-id]').forEach((b) => (b.onclick = () => openAsset(b.dataset.id)));
-  renderMap(wtgGroups);
+  renderMap(wtgGroups, elsewhere);
+}
+
+function elsewhereCard(units) {
+  return `<section class="loc-card">
+    ${summaryChips(units)}
+    ${units.map((a) => {
+      const pos = a.last.lat != null
+        ? `<a href="https://www.openstreetmap.org/?mlat=${a.last.lat}&mlon=${a.last.lon}#map=14/${a.last.lat}/${a.last.lon}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${a.last.lat.toFixed(4)}, ${a.last.lon.toFixed(4)}</a>`
+        : 'position unknown';
+      return `<button type="button" class="unit" data-id="${a.id}">
+        <div class="unit-kind">${esc(kindOf(a))}</div>
+        <div class="unit-vals">At ${pos}</div>
+        <div class="unit-vals">${unitValues(a)}</div>
+        ${a.alerts.length ? `<div>${a.alerts.map((x) => `<span class="badge badge-danger">${esc(x.text)}</span>`).join(' ')}</div>` : ''}
+        <div class="unit-vals">Checked ${esc(ago(a.last.recorded_at))}${a.last.user_name ? ` by ${esc(a.last.user_name)}` : ''}</div>
+      </button>`;
+    }).join('')}
+  </section>`;
 }
 
 function summaryChips(units) {
@@ -165,7 +188,7 @@ function initMap() {
   markerLayer = L.layerGroup().addTo(map);
 }
 
-function renderMap(wtgGroups) {
+function renderMap(wtgGroups, elsewhere = []) {
   if (!map) return;
   markerLayer.clearLayers();
   const bounds = [];
@@ -183,6 +206,12 @@ function renderMap(wtgGroups) {
     const html = `<b>${esc(g.location.name)}</b><br>${[...counts].map(([k, n]) => `${n} × ${esc(k)}`).join('<br>')}` +
       (alert ? '<br><span style="color:#c0392b">⚠ needs attention</span>' : '');
     L.marker([g.location.lat, g.location.lon], { icon, zIndexOffset: 1000 }).bindPopup(html).addTo(markerLayer);
+  }
+  // Units elsewhere get their own pin at the phone's position (not included in the
+  // initial zoom, which stays on the wind farm).
+  for (const a of elsewhere.filter((x) => x.last.lat != null)) {
+    const icon = L.divIcon({ className: '', html: `<div class="map-count map-elsewhere${a.alerts.length ? ' alert' : ''}">1</div>`, iconSize: [28, 28] });
+    L.marker([a.last.lat, a.last.lon], { icon }).bindPopup(`<b>${esc(kindOf(a))}</b><br>Elsewhere · ${esc(ago(a.last.recorded_at))}`).addTo(markerLayer);
   }
   if (!fitted && bounds.length) {
     map.fitBounds(bounds, { padding: [30, 30], maxZoom: 12 });
@@ -205,7 +234,7 @@ async function openAsset(id) {
         <h2 id="d-title" style="margin:0">${esc(kindOf({ ...asset, type }))}</h2>
         <button class="btn" type="button" id="d-close">Close</button>
       </div>
-      <p class="muted">${readings[0] ? `At ${esc(readings[0].location_name || '?')} · checked ${esc(ago(readings[0].recorded_at))}` : 'Not scanned yet'}</p>
+      <p class="muted">${readings[0] ? `At ${esc(readings[0].location_name || 'phone GPS position (elsewhere)')} · checked ${esc(ago(readings[0].recorded_at))}` : 'Not scanned yet'}</p>
       <dl class="kv">${type.fields.filter((f) => f.scope === 'asset').map((f) =>
         `<dt>${esc(f.label)}</dt><dd>${esc(formatValue(f, asset.attributes[f.key]))}</dd>`).join('')}</dl>
       <p class="muted" style="font-size:.85rem">Serial ${esc(asset.serial)}${asset.name ? ` · ${esc(asset.name)}` : ''}</p>
@@ -214,7 +243,7 @@ async function openAsset(id) {
         <thead><tr><th>When</th><th>Location</th>${checks.map((f) => `<th>${esc(f.label)}</th>`).join('')}<th>By</th></tr></thead>
         <tbody>${readings.map((r) => `<tr>
           <td>${esc(fmtTime(r.recorded_at))}</td>
-          <td>${esc(r.location_name || '?')} ${sourceBadge(r)}${r.distance_m != null ? `<div class="muted">${Math.round(r.distance_m)} m from WTG</div>` : ''}</td>
+          <td>${r.location_name ? esc(r.location_name) : r.lat != null ? `Elsewhere (${r.lat.toFixed(4)}, ${r.lon.toFixed(4)})` : '?'} ${sourceBadge(r)}${r.distance_m != null ? `<div class="muted">${Math.round(r.distance_m)} m from WTG</div>` : ''}</td>
           ${checks.map((f) => `<td>${esc(formatValue(f, r.data[f.key]))}</td>`).join('')}
           <td>${esc(r.user_name || '')}${r.notes ? `<div class="muted">${esc(r.notes)}</div>` : ''}</td>
         </tr>`).join('') || `<tr><td colspan="${checks.length + 3}" class="muted">No readings yet.</td></tr>`}</tbody>

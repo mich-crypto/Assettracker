@@ -19,6 +19,10 @@ let current = null;      // { asset, type, code }
 let bestFix = null;      // most recent GPS fix
 let resolution = null;   // result of resolveLocation
 let chosenLocation = null;
+
+// Pseudo location: "wherever the phone is" (shore, train, warehouse...). Saved
+// with the GPS fix and no WTG/SOV.
+const HERE = { id: '__gps', kind: 'GPS', name: 'Phone GPS position' };
 let manualChoice = false;
 let fixTimer = null;
 
@@ -55,7 +59,8 @@ async function init() {
   $('btn-loc-change').onclick = () => showManualPicker(true);
   $('loc-filter').oninput = fillLocationSelect;
   $('loc-select').onchange = () => {
-    chosenLocation = ref.locations.find((l) => l.id === $('loc-select').value) || null;
+    const v = $('loc-select').value;
+    chosenLocation = v === HERE.id ? HERE : ref.locations.find((l) => l.id === v) || null;
     manualChoice = true;
     $('loc-error').textContent = '';
     $('loc-name').textContent = chosenLocation ? labelFor(chosenLocation) : '';
@@ -123,19 +128,26 @@ function applyResolution() {
     ok: 'GPS position',
     poor_accuracy: 'Weak GPS signal',
     no_fix: 'No GPS position',
-    implausible: 'GPS position not plausible',
+    implausible: 'Far from the wind farm',
   }[resolution.gpsStatus];
   $('loc-status').textContent = status;
   $('loc-detail').textContent = resolution.reason;
-  if (!manualChoice) chosenLocation = resolution.requiresManual ? null : resolution.suggestion;
-  box.className = `loc-box ${resolution.requiresManual ? 'warn' : 'ok'}`;
+  if (!manualChoice) {
+    // Away from the farm, default to the phone's own position; the user can still pick any WTG / SOV.
+    chosenLocation = resolution.elsewhere && bestFix ? HERE : resolution.requiresManual ? null : resolution.suggestion;
+  }
+  if (resolution.gpsStatus === 'implausible') {
+    $('loc-detail').textContent = `${resolution.reason.split(' (')[0]}. Saved at the phone's GPS position - if you are offshore, GPS may be jammed: select the WTG / SOV.`;
+  }
+  box.className = `loc-box ${resolution.requiresManual && chosenLocation !== HERE ? 'warn' : 'ok'}`;
   $('loc-name').textContent = chosenLocation ? labelFor(chosenLocation) : '';
   $('btn-loc-change').classList.toggle('hidden', !chosenLocation);
   $('btn-loc-manual').classList.toggle('hidden', !!chosenLocation);
-  if (resolution.requiresManual) showManualPicker(false);
+  if (resolution.requiresManual && chosenLocation !== HERE) showManualPicker(false);
 }
 
 function labelFor(l) {
+  if (l === HERE) return bestFix ? `Here (${bestFix.lat.toFixed(4)}, ${bestFix.lon.toFixed(4)})` : 'Here (GPS position)';
   return l.kind === 'SOV' ? `${l.name} (vessel)` : l.name;
 }
 
@@ -159,7 +171,9 @@ function fillLocationSelect() {
     const hint = d != null && resolution?.gpsStatus !== 'implausible' ? ` · ${d < 2000 ? `${Math.round(d)} m` : `${(d / 1000).toFixed(1)} km`}` : '';
     return `<option value="${l.id}"${chosenLocation?.id === l.id ? ' selected' : ''}>${esc(l.name)}${hint}</option>`;
   };
-  $('loc-select').innerHTML =
+  const here = bestFix && (!q || 'here gps elsewhere'.includes(q))
+    ? `<optgroup label="Elsewhere"><option value="${HERE.id}"${chosenLocation === HERE ? ' selected' : ''}>Here (phone GPS position)</option></optgroup>` : '';
+  $('loc-select').innerHTML = here +
     (sovs.length ? `<optgroup label="Vessel (SOV)">${sovs.map(opt).join('')}</optgroup>` : '') +
     (wtgs.length ? `<optgroup label="Turbines (WTG)">${wtgs.map(opt).join('')}</optgroup>` : '');
 }
@@ -299,14 +313,19 @@ async function onSave(e) {
   const fix = bestFix;
   // In testing mode the GPS status is still recorded, it just never decided the location.
   if (!geoCheckOn()) resolution = resolveLocation(fix, ref.locations);
-  const usedGps = geoCheckOn() && !manualChoice && resolution && !resolution.requiresManual;
-  localStorage.setItem(LAST_LOCATION_KEY, chosenLocation.id);
+  const atHere = chosenLocation === HERE;
+  if (atHere && !fix) {
+    $('loc-error').textContent = 'No GPS position - select a WTG or vessel instead.';
+    return;
+  }
+  const usedGps = atHere || (geoCheckOn() && !manualChoice && resolution && !resolution.requiresManual);
+  if (!atHere) localStorage.setItem(LAST_LOCATION_KEY, chosenLocation.id);
   const reading = {
     id: crypto.randomUUID(),
     asset_id: current.asset?.id ?? null,
     tag_code: current.code,
     recorded_at: new Date().toISOString(),
-    location_id: chosenLocation.id,
+    location_id: atHere ? null : chosenLocation.id,
     location_source: usedGps ? 'gps' : 'manual',
     gps_status: resolution?.gpsStatus ?? 'unavailable',
     lat: fix?.lat ?? null,
@@ -319,7 +338,7 @@ async function onSave(e) {
     device_id: deviceId(),
     recorded_by: user.name,
     // Local-only display label; stripped before upload.
-    label: `${current.asset?.serial ?? current.code} @ ${chosenLocation.name}`,
+    label: `${current.asset?.serial ?? current.code} @ ${atHere ? labelFor(HERE) : chosenLocation.name}`,
   };
   await outbox.put(reading);
   const alerts = evaluateAlerts(current.type.fields, values);

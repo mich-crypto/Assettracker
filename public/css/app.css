@@ -184,6 +184,7 @@ tbody tr.clickable:hover { background: var(--surface-2); }
   box-shadow: 0 1px 4px rgb(0 0 0 / 35%);
 }
 .map-count.alert { background: #c0392b; }
+.map-count.map-elsewhere { background: #6b4fbb; }
 .map-wtg { width: 10px; height: 10px; border-radius: 50%; background: #6b7c8a; border: 2px solid #fff; }
 .drawer {
   position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 100%); z-index: 100;

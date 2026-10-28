@@ -12,20 +12,25 @@ Cloudflare (Workers + D1) and has an offline-first phone app for technicians.
 
 ## How the field app decides the location
 
-When a tag is scanned, the phone's GPS fix is compared with the surveyed positions of the
-WTGs, using the cached location list, so this works offline too (`public/js/geo.js`):
+With `"GEO_CHECK": "on"` in `wrangler.jsonc`, the phone's GPS fix is compared with the
+surveyed WTG positions. The check uses the cached location list, so it works offline
+(`public/js/geo.js`). The result is only a **suggestion**: **Change location** always lets the
+user pick any WTG, SOV or **Here (phone GPS position)**.
 
-| Situation | Result |
+| Situation | Suggested location |
 |---|---|
-| Fix within a WTG's radius (default 300 m) | That WTG is filled in and marked **GPS** |
-| Good fix, but not near any WTG | The asset is on the vessel: the SOV is filled in (the user must pick one if there are several) |
-| No fix, fix older than 2 min, or 0,0 | **Manual entry required** (GPS jamming) |
-| Fix more than 150 km from every WTG | **Manual entry required** (spoofing / implausible) |
-| Accuracy worse than ±150 m | Suggests the nearest WTG but asks the user to confirm |
+| Fix within a WTG's radius (default 300 m) | That WTG, marked **GPS** |
+| Within the wind farm (< 30 km of a WTG) but not at a turbine | The SOV (the user picks one if there are several) |
+| Away from the farm (> 30 km): shore, train, warehouse | **Here**, the phone's own GPS position, with no WTG/SOV |
+| More than 150 km away | **Here**, with a warning that offshore this can mean GPS jamming |
+| No fix, fix older than 2 min, or 0,0 | Nothing: the user selects the location (GPS jamming) |
+| Accuracy worse than ±150 m | Nearest WTG, which the user is asked to confirm |
 
-Each reading stores whether the location came from GPS or was entered manually, the GPS
-status, the raw fix, its accuracy and the distance to the WTG. The overview shows a
-**GPS** or **Manual** badge for every reading.
+Readings saved at **Here** appear on the overview under **Elsewhere**, with their coordinates
+and a map pin. Every reading records whether its location came from GPS or was chosen by
+hand, plus the GPS status, raw fix, accuracy and distance to the WTG.
+
+`"GEO_CHECK": "off"` turns the suggestion off completely, and the location is always picked by hand.
 
 ## Offline and sync
 

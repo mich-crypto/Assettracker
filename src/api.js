@@ -444,7 +444,9 @@ router.add('POST', '/api/readings/sync', async ({ request, env, user }) => {
       const asset = assets.get(raw.asset_id) ||
         (raw.tag_code ? assets.get(tagIndex.get(String(raw.tag_code).toLowerCase())) : null);
       if (!asset) { reject('Unknown asset / tag not linked'); continue; }
-      if (!raw.location_id || !locationIds.has(raw.location_id)) { reject('Unknown or missing location'); continue; }
+      // No WTG/SOV is fine when the phone's GPS position is the location (shore, train, warehouse).
+      const hasFix = Number.isFinite(raw.lat) && Number.isFinite(raw.lon);
+      if (raw.location_id ? !locationIds.has(raw.location_id) : !hasFix) { reject('Unknown or missing location'); continue; }
       const recordedAt = new Date(raw.recorded_at);
       if (Number.isNaN(recordedAt.getTime())) { reject('Invalid recorded_at'); continue; }
       if (recordedAt.getTime() > Date.now() + 24 * 3600 * 1000) { reject('recorded_at is in the future (check phone clock)'); continue; }
@@ -459,7 +461,7 @@ router.add('POST', '/api/readings/sync', async ({ request, env, user }) => {
             (id, asset_id, recorded_at, user_id, location_id, location_source, gps_status, lat, lon, accuracy_m, distance_m, data, notes, tag_code, device_id, recorded_by)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).bind(
-          id, asset.id, recordedAt.toISOString(), user.id, raw.location_id, source, gpsStatus,
+          id, asset.id, recordedAt.toISOString(), user.id, raw.location_id || null, source, gpsStatus,
           num(raw.lat, { min: -90, max: 90, name: 'lat' }), num(raw.lon, { min: -180, max: 180, name: 'lon' }),
           num(raw.accuracy_m, { min: 0, name: 'accuracy' }), num(raw.distance_m, { min: 0, name: 'distance' }),
           JSON.stringify(values), str(raw.notes, { max: 2000, name: 'notes' }), str(raw.tag_code, { max: 120 }),

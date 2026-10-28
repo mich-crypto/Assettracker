@@ -67,3 +67,17 @@ test('inactive locations are ignored', () => {
   const r = resolveLocation(fix(54.001, 6.0), locations.map((l) => (l.id === 'a01' ? { ...l, active: 0 } : l)), { now });
   assert.equal(r.suggestion.id, 'sov');
 });
+
+test('fix on shore near the farm is elsewhere (phone position), not the SOV', () => {
+  const coast = resolveLocation(fix(53.6, 6.6), locations, { now }); // ~58 km from A01
+  assert.equal(coast.gpsStatus, 'ok');
+  assert.equal(coast.elsewhere, true);
+  assert.equal(coast.suggestion, null);
+  assert.equal(coast.requiresManual, false);
+});
+
+test('implausibly far fix is also flagged elsewhere so it can be kept if intended', () => {
+  const r = resolveLocation(fix(53.55, 9.99), locations, { now }); // Hamburg, ~260 km
+  assert.equal(r.gpsStatus, 'implausible');
+  assert.equal(r.elsewhere, true);
+});

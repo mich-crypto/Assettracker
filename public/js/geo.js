@@ -4,6 +4,7 @@
 
 export const DEFAULTS = {
   maxAccuracyM: 150,      // fixes worse than this are treated as unreliable
+  farmKm: 30,             // further than this from every WTG => not at the wind farm (shore, train, port)
   implausibleKm: 150,     // further than this from every WTG => likely jamming/spoofing
   maxFixAgeMs: 2 * 60 * 1000,
 };
@@ -31,6 +32,7 @@ function validCoord(lat, lon) {
  *   gpsStatus: 'ok'|'poor_accuracy'|'no_fix'|'implausible',
  *   requiresManual: boolean,   // true => the user must pick the location themselves
  *   suggestion: location|null, // best guess (WTG in range, else the SOV)
+ *   elsewhere: boolean,        // fix is away from the wind farm: use the phone's own position
  *   distanceM: number|null,    // fix -> suggested WTG
  *   nearest: [{ location, distanceM }] // WTGs by distance, for the picker
  *   reason: string
@@ -49,6 +51,7 @@ export function resolveLocation(fix, locations, opts = {}) {
     suggestion: null,
     distanceM: null,
     nearest: [],
+    elsewhere: false,
     ...extra,
   });
 
@@ -67,6 +70,7 @@ export function resolveLocation(fix, locations, opts = {}) {
   if (nearest.length && nearest[0].distanceM > o.implausibleKm * 1000) {
     return result('implausible', {
       nearest,
+      elsewhere: true,
       reason: `GPS position is ${Math.round(nearest[0].distanceM / 1000)} km from the nearest WTG (possible jamming/spoofing). Select the location manually.`,
     });
   }
@@ -92,7 +96,16 @@ export function resolveLocation(fix, locations, opts = {}) {
     });
   }
 
-  // Not at any turbine: the asset is on the vessel.
+  // Well away from the farm (on shore, in a train): the phone's position is the location.
+  if (nearest.length && nearest[0].distanceM > o.farmKm * 1000) {
+    return result('ok', {
+      nearest,
+      elsewhere: true,
+      reason: `Not at the wind farm (${Math.round(nearest[0].distanceM / 1000)} km from the nearest WTG). Saved at the phone's GPS position.`,
+    });
+  }
+
+  // Not at any turbine but within the farm: the asset is on the vessel.
   if (soleSov) {
     return result('ok', { nearest, suggestion: soleSov, reason: `Not near a WTG - assumed on board ${soleSov.name}.` });
   }
