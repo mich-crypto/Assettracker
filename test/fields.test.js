@@ -45,10 +45,10 @@ test('field definition validation catches mistakes', () => {
   assert.equal(errors.length, 5);
 });
 
-test('current generator type: fuel in 25 % steps, alert at 25 % or less, running hours optional', () => {
+test('current generator type: fuel in 25 % steps, alert at 25 % or less', () => {
   assert.deepEqual(validateFieldDefs(generatorNow), []);
   const ok = normalizeValues(generatorNow, 'check', { fuel_level: '75', fuel_cube: true });
-  assert.deepEqual(ok.errors, {}, 'running hours may be left empty');
+  assert.deepEqual(ok.errors, {});
   assert.equal(ok.values.fuel_level, 75);
   assert.match(normalizeValues(generatorNow, 'check', { fuel_level: 60, fuel_cube: true }).errors.fuel_level, /steps of 25/);
   assert.deepEqual(evaluateAlerts(generatorNow, { fuel_level: 25, fuel_cube: true }).map((a) => a.key), ['fuel_level']);
