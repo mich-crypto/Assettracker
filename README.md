@@ -5,7 +5,7 @@ Cloudflare (Workers + D1) and has an offline-first phone app for technicians.
 
 | Screen | Path | Who | Purpose |
 |---|---|---|---|
-| **Overview** | `/overview` | Site manager (also supervisor, admin) | By location: what equipment is on the SOV and on each WTG (e.g. "2 × Generator 30 kVA"), with latest fuel level / fuel cube / alarms, attention flags, map, history, CSV export. No serials or tag codes |
+| **Overview** | `/overview` | Site manager (also supervisor, admin) | Top: **Assign a location** (pick a serial number, choose the SOV or a WTG). Then a searchable list of equipment **on the vessel** and a searchable list of **turbines with their equipment**, each showing fuel level, a ⚠ warning symbol and last check. Map, history, CSV export. Serials are only used for searching and assigning |
 | **Add equipment** | `/add` | Warehouse supervisor, on the phone | Step by step: rating (e.g. 30 / 350 kVA), serial number, stick the QR label on the generator window, scan it, saved |
 | **Link tags** | `/link` | Warehouse supervisor | Edit equipment and tags, print sheets of blank QR labels, read/write NFC tags |
 | **Scan** | `/field` | Technicians and warehouse supervisor | Scan QR/NFC, auto-detect WTG or SOV by GPS, enter fuel level, fuel cube, alarms. Works offline and syncs later |
@@ -166,6 +166,7 @@ In login mode, all endpoints except auth require `Authorization: Bearer <token>`
 | GET | `/api/bootstrap` | types, locations, assets and tags for the offline cache |
 | GET / POST / PATCH | `/api/assets[/:id]` | list with latest reading; detail with history |
 | POST / DELETE | `/api/assets/:id/tags`, `/api/tags/:code` | link or unlink a tag |
+| POST | `/api/assets/:id/move` | put a unit at a location by hand (stored as a `move` reading) |
 | POST | `/api/readings/sync` | batch upload of up to 500 readings, idempotent, per-item result |
 | GET | `/api/readings` | filter by `asset_id`, `location_id`, `from`, `to` |
 | GET / POST / PATCH | `/api/locations`, `/api/locations/import` | |

@@ -19,18 +19,46 @@
       </div>
     </div>
     <div class="kpis" id="kpis"></div>
-    <div class="row" style="margin-bottom:16px">
-      <input class="grow" id="q" type="search" placeholder="Find a location, e.g. A03 or vessel name" aria-label="Find location">
-      <select id="f-type" aria-label="Equipment type"><option value="">All equipment</option></select>
-      <label class="row" style="gap:6px"><input type="checkbox" id="f-alert"> Needs attention only</label>
-    </div>
 
-    <h2>On the vessel</h2>
-    <div class="loc-grid" id="sov-cards"></div>
+    <form class="card assign" id="assign-form" autocomplete="off">
+      <h2>Assign a location</h2>
+      <div class="row">
+        <div class="field grow"><label for="as-serial">Serial number</label>
+          <input id="as-serial" list="serial-list" type="text" autocapitalize="characters" placeholder="Type or pick a serial number" required>
+          <datalist id="serial-list"></datalist>
+        </div>
+        <div class="field grow"><label for="as-location">Location</label>
+          <select id="as-location" required></select>
+        </div>
+        <div class="field"><button class="btn btn-primary" type="submit" id="as-save">Assign</button></div>
+      </div>
+      <p class="muted" id="as-hint" aria-live="polite"></p>
+    </form>
 
-    <h2 style="margin-top:20px">On turbines</h2>
+    <label class="row" style="gap:6px;margin:0 0 12px"><input type="checkbox" id="f-alert"> Show only equipment with a warning <span class="warn-sym" aria-hidden="true">⚠</span></label>
+
+    <section class="card">
+      <div class="section-head">
+        <h2>On the vessel</h2>
+        <input id="q-sov" type="search" placeholder="Search equipment on the vessel" aria-label="Search equipment on the vessel">
+      </div>
+      <div class="table-wrap"><table class="unit-table">
+        <thead><tr><th>Equipment</th><th>Fuel</th><th class="c-warn"><span aria-hidden="true">⚠</span><span class="sr-only">Warning</span></th><th>Last check</th></tr></thead>
+        <tbody id="sov-rows"></tbody>
+      </table></div>
+    </section>
+
+    <section class="card">
+      <div class="section-head">
+        <h2>On turbines</h2>
+        <input id="q-wtg" type="search" placeholder="Find a WTG or equipment" aria-label="Find a WTG or equipment">
+      </div>
+      <div class="table-wrap"><table class="unit-table" id="wtg-table">
+        <thead><tr><th>WTG</th><th>Equipment</th><th>Fuel</th><th class="c-warn"><span aria-hidden="true">⚠</span><span class="sr-only">Warning</span></th><th>Last check</th></tr></thead>
+      </table></div>
+    </section>
+
     <div class="card"><div id="map" role="region" aria-label="Map of equipment on turbines"></div></div>
-    <div class="loc-grid" id="wtg-cards"></div>
 
     <section id="elsewhere-section" class="hidden">
       <h2 style="margin-top:20px">Elsewhere</h2>

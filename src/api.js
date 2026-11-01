@@ -270,7 +270,8 @@ router.add('POST', '/api/locations/import', async ({ request, env, user }) => {
 
 // ---------------------------------------------------------------- assets
 
-// Latest reading per asset, for the site manager's overview.
+// Per asset: where it is now (latest reading of any kind, including manual
+// moves) and its latest check values (latest scan), for the overview.
 router.add('GET', '/api/assets', async ({ env, user, url }) => {
   guard(user, 'overview');
   const where = [];
@@ -282,15 +283,22 @@ router.add('GET', '/api/assets', async ({ env, user, url }) => {
     WITH latest AS (
       SELECT r.*, ROW_NUMBER() OVER (PARTITION BY r.asset_id ORDER BY r.recorded_at DESC, r.received_at DESC) AS rn
       FROM readings r
+    ),
+    latest_check AS (
+      SELECT r.asset_id, r.recorded_at, r.data,
+        ROW_NUMBER() OVER (PARTITION BY r.asset_id ORDER BY r.recorded_at DESC, r.received_at DESC) AS rn
+      FROM readings r WHERE r.kind = 'check'
     )
     SELECT a.*,
       (SELECT group_concat(t.code || char(30) || t.kind, char(31)) FROM tags t WHERE t.asset_id = a.id) AS tag_codes,
       l.id AS r_id, l.recorded_at AS r_recorded_at, l.location_id AS r_location_id, l.location_source AS r_location_source,
       l.gps_status AS r_gps_status, l.lat AS r_lat, l.lon AS r_lon, l.accuracy_m AS r_accuracy_m, l.data AS r_data,
-      l.notes AS r_notes, COALESCE(u.name, l.recorded_by) AS r_user_name,
+      l.notes AS r_notes, l.kind AS r_kind, COALESCE(u.name, l.recorded_by) AS r_user_name,
+      c.recorded_at AS c_recorded_at, c.data AS c_data,
       loc.name AS r_location_name, loc.kind AS r_location_kind, loc.lat AS r_location_lat, loc.lon AS r_location_lon
     FROM assets a
     LEFT JOIN latest l ON l.asset_id = a.id AND l.rn = 1
+    LEFT JOIN latest_check c ON c.asset_id = a.id AND c.rn = 1
     LEFT JOIN locations loc ON loc.id = l.location_id
     LEFT JOIN users u ON u.id = l.user_id
     ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
@@ -300,11 +308,17 @@ router.add('GET', '/api/assets', async ({ env, user, url }) => {
     assets: results.map((row) => {
       const asset = {};
       const last = {};
+      const check = {};
       for (const [k, v] of Object.entries(row)) {
         if (k.startsWith('r_')) last[k.slice(2)] = v;
+        else if (k.startsWith('c_')) check[k.slice(2)] = v;
         else asset[k] = v;
       }
-      return { ...assetOut(asset), last: last.id ? readingOut(last) : null };
+      return {
+        ...assetOut(asset),
+        last: last.id ? readingOut(last) : null,
+        check: check.recorded_at ? readingOut(check) : null,
+      };
     }),
   });
 });
@@ -377,6 +391,23 @@ router.add('PATCH', '/api/assets/:id', async ({ request, env, user, params }) =>
   }
   await env.DB.prepare(`UPDATE assets SET ${sets.join(', ')} WHERE id = ?`).bind(...vals, params.id).run();
   return json({ asset: assetOut(await env.DB.prepare(`${ASSET_SELECT} WHERE a.id = ?`).bind(params.id).first()) });
+});
+
+// Site manager puts a unit at a location by hand (no scan). Stored as a 'move'
+// reading so the history shows who placed it where and when.
+router.add('POST', '/api/assets/:id/move', async ({ request, env, user, params }) => {
+  guard(user, 'overview');
+  const body = await readJson(request);
+  const asset = await env.DB.prepare("SELECT id FROM assets WHERE id = ? AND status = 'active'").bind(params.id).first();
+  if (!asset) throw new HttpError(404, 'Equipment not found');
+  const loc = await env.DB.prepare('SELECT id, name FROM locations WHERE id = ? AND active = 1').bind(body.location_id || '').first();
+  if (!loc) throw new HttpError(400, 'Select a location');
+  const id = newId();
+  await env.DB.prepare(
+    `INSERT INTO readings (id, asset_id, recorded_at, user_id, location_id, location_source, gps_status, data, notes, kind, recorded_by)
+     VALUES (?, ?, ?, ?, ?, 'manual', 'unavailable', '{}', ?, 'move', ?)`,
+  ).bind(id, asset.id, nowIso(), user.id, loc.id, str(body.notes, { max: 500 }), user.id ? user.name : str(body.recorded_by, { max: 100 })).run();
+  return json({ ok: true, id, location: loc }, 201);
 });
 
 router.add('POST', '/api/assets/:id/tags', async ({ request, env, user, params }) => {

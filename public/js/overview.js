@@ -1,6 +1,7 @@
-// Site manager overview, organised by location: what equipment is on the vessel
-// and on each turbine, with its latest check values and alerts.
-import { ago, api, esc, fmtTime, registerServiceWorker, renderHeader, requireLogin, toast } from './app.js';
+// Site manager overview: a searchable list of the equipment on the vessel, then
+// the turbines with their equipment, fuel level and a warning symbol. The manager
+// can also put a unit at a location by hand (serial number -> location).
+import { ago, api, esc, fmtTime, registerServiceWorker, renderHeader, requireLogin, session, toast } from './app.js';
 import { evaluateAlerts, fixedAt, formatValue } from './fields.js';
 
 const user = requireLogin('overview');
@@ -20,7 +21,9 @@ async function init() {
   renderHeader('overview');
   registerServiceWorker();
   initMap();
-  ['q', 'f-type', 'f-alert'].forEach((id) => $(id).addEventListener('input', render));
+  ['q-sov', 'q-wtg', 'f-alert'].forEach((id) => $(id).addEventListener('input', render));
+  $('assign-form').onsubmit = onAssign;
+  $('as-serial').oninput = assignHint;
   $('btn-csv').onclick = exportCsv;
   await load();
   setInterval(load, 60_000);
@@ -32,8 +35,7 @@ async function load() {
     types = boot.types;
     locations = boot.locations;
     assets = list.assets.map(enrich);
-    const sel = $('f-type');
-    if (sel.options.length === 1) sel.innerHTML += types.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('');
+    fillAssignLists();
     $('updated').textContent = `Updated ${new Date().toLocaleTimeString()}`;
     render();
   } catch (e) {
@@ -45,10 +47,11 @@ function typeOf(a) {
   return types.find((t) => t.id === a.type_id) || { name: a.type_id, fields: [] };
 }
 
+// `last` = where the unit is now (scan or manual move); `check` = its latest scan values.
 function enrich(a) {
   const type = typeOf(a);
-  const alerts = a.last ? evaluateAlerts(type.fields, a.last.data) : [];
-  const stale = !a.last || Date.now() - new Date(a.last.recorded_at) > STALE_DAYS * 86400e3;
+  const alerts = a.check ? evaluateAlerts(type.fields, a.check.data) : [];
+  const stale = !!a.last && (!a.check || Date.now() - new Date(a.check.recorded_at) > STALE_DAYS * 86400e3);
   return { ...a, type, alerts, stale };
 }
 
@@ -59,65 +62,104 @@ function kindOf(a) {
   return [a.type.name, ...extras].join(' ');
 }
 
-function filtered() {
-  const q = $('q').value.trim().toLowerCase().replace(/\s+/g, '');
-  const type = $('f-type').value;
-  const alertsOnly = $('f-alert').checked;
-  return assets.filter((a) => {
-    if (type && a.type_id !== type) return false;
-    if (alertsOnly && !a.alerts.length) return false;
-    const where = a.last ? (a.last.location_name || 'elsewhere gps') : '';
-    if (q && !where.toLowerCase().replace(/\s+/g, '').includes(q)) return false;
-    return true;
-  });
+const norm = (v) => String(v || '').toLowerCase().replace(/\s+/g, '');
+
+/** Search text for a unit: what it is, where it is, its serial and tags (serials aren't shown but can be searched). */
+function haystack(a) {
+  return norm([kindOf(a), a.last?.location_name, a.serial, a.name, ...a.tags.map((t) => t.code), ...a.alerts.map((x) => x.text)].join(' '));
 }
 
-/** Groups units by their current location: { location, units }[]. */
-function byLocation(list) {
-  const groups = new Map();
-  for (const a of list) {
-    if (!a.last?.location_id) continue;
-    const loc = locations.find((l) => l.id === a.last.location_id) ||
-      { id: a.last.location_id, name: a.last.location_name, kind: a.last.location_kind };
-    if (!groups.has(loc.id)) groups.set(loc.id, { location: loc, units: [] });
-    groups.get(loc.id).units.push(a);
-  }
-  return [...groups.values()];
+function visible(a, q) {
+  if ($('f-alert').checked && !a.alerts.length) return false;
+  return !q || haystack(a).includes(q);
 }
+
+const byKind = (x, y) => kindOf(x).localeCompare(kindOf(y), undefined, { numeric: true });
 
 function render() {
-  const list = filtered();
   const onSov = assets.filter((a) => a.last?.location_kind === 'SOV');
   const onWtg = assets.filter((a) => a.last?.location_kind === 'WTG');
   const kpi = (n, label) => `<div class="kpi"><b>${n}</b><span>${label}</span></div>`;
   $('kpis').innerHTML =
     kpi(onSov.length, 'on the vessel') +
-    kpi(`${onWtg.length}`, `on ${new Set(onWtg.map((a) => a.last.location_id)).size} turbines`) +
-    kpi(assets.filter((a) => a.alerts.length).length, 'need attention') +
-    kpi(assets.filter((a) => a.last && a.stale).length, `not checked in ${STALE_DAYS} days`);
+    kpi(onWtg.length, `on ${new Set(onWtg.map((a) => a.last.location_id)).size} turbines`) +
+    kpi(`<span class="warn-sym">⚠</span> ${assets.filter((a) => a.alerts.length).length}`, 'with a warning') +
+    kpi(assets.filter((a) => a.stale).length, `not checked in ${STALE_DAYS} days`);
 
-  const groups = byLocation(list);
-  const byName = (x, y) => x.location.name.localeCompare(y.location.name, undefined, { numeric: true });
-  const sovGroups = groups.filter((g) => g.location.kind === 'SOV').sort(byName);
-  // Show every vessel, even an empty one: "nothing on board" is useful to know.
-  for (const sov of locations.filter((l) => l.kind === 'SOV' && l.active)) {
-    if (!sovGroups.some((g) => g.location.id === sov.id) && !$('q').value && !$('f-alert').checked) sovGroups.push({ location: sov, units: [] });
+  // Vessel: one searchable list (vessel name shown when there is more than one SOV).
+  const sovCount = locations.filter((l) => l.kind === 'SOV' && l.active).length;
+  const qs = norm($('q-sov').value);
+  const sovList = onSov.filter((a) => visible(a, qs)).sort((x, y) =>
+    (x.last.location_name || '').localeCompare(y.last.location_name || '') || byKind(x, y));
+  $('sov-rows').innerHTML = sovList.map((a) => `<tr class="clickable" data-id="${a.id}">
+      <td><b>${esc(kindOf(a))}</b><span class="warn-inline">${warnCell(a)}</span>${sovCount > 1 ? `<div class="muted">${esc(a.last.location_name)}</div>` : ''}${movedTag(a)}</td>
+      <td>${fuelCell(a)}</td><td class="c-warn">${warnCell(a)}</td><td>${checkedCell(a)}</td>
+    </tr>`).join('') || `<tr><td colspan="4" class="muted">${onSov.length ? 'No equipment on the vessel matches.' : 'No equipment on the vessel.'}</td></tr>`;
+
+  // Turbines: grouped per WTG, in turbine order.
+  const qw = norm($('q-wtg').value);
+  const groups = new Map();
+  for (const a of onWtg) {
+    const wtgMatch = qw && norm(a.last.location_name).includes(qw);
+    if (!visible(a, wtgMatch ? '' : qw)) continue;
+    const key = a.last.location_id;
+    if (!groups.has(key)) groups.set(key, { name: a.last.location_name, lat: a.last.location_lat, lon: a.last.location_lon, units: [] });
+    groups.get(key).units.push(a);
   }
-  const wtgGroups = groups.filter((g) => g.location.kind === 'WTG').sort(byName);
-  const elsewhere = list.filter((a) => a.last && !a.last.location_id)
+  const wtgGroups = [...groups.values()].sort((x, y) => x.name.localeCompare(y.name, undefined, { numeric: true }));
+  const table = $('wtg-table');
+  table.querySelectorAll('tbody').forEach((tb) => tb.remove());
+  table.insertAdjacentHTML('beforeend', wtgGroups.length
+    ? wtgGroups.map((g) => `<tbody class="wtg-group">${g.units.sort(byKind).map((a, i) => `<tr class="clickable" data-id="${a.id}">
+        ${i === 0 ? `<td class="wtg-name" rowspan="${g.units.length}">${esc(g.name)}</td>` : ''}
+        <td><b>${esc(kindOf(a))}</b><span class="warn-inline">${warnCell(a)}</span>${movedTag(a)}</td>
+        <td>${fuelCell(a)}</td><td class="c-warn">${warnCell(a)}</td><td>${checkedCell(a)}</td>
+      </tr>`).join('')}</tbody>`).join('')
+    : `<tbody><tr><td colspan="5" class="muted">${onWtg.length ? 'No turbine or equipment matches.' : 'No equipment on turbines.'}</td></tr></tbody>`);
+
+  const elsewhere = assets.filter((a) => a.last && !a.last.location_id && visible(a, ''))
     .sort((x, y) => y.last.recorded_at.localeCompare(x.last.recorded_at));
   $('elsewhere-section').classList.toggle('hidden', !elsewhere.length);
   $('elsewhere-cards').innerHTML = elsewhere.length ? elsewhereCard(elsewhere) : '';
-  $('sov-cards').innerHTML = sovGroups.map(locationCard).join('') || '<p class="empty-note">No equipment on the vessel matches.</p>';
-  $('wtg-cards').innerHTML = wtgGroups.map(locationCard).join('') || '<p class="empty-note">No equipment on turbines matches.</p>';
 
-  const unplaced = list.filter((a) => !a.last);
+  const unplaced = assets.filter((a) => !a.last);
   $('unplaced').classList.toggle('hidden', !unplaced.length);
   $('unplaced-count').textContent = `(${unplaced.length})`;
-  $('unplaced-list').innerHTML = summaryChips(unplaced);
+  $('unplaced-list').innerHTML = summaryChips(unplaced) +
+    '<p class="muted">Use <b>Assign a location</b> above to place them.</p>';
 
-  document.querySelectorAll('.unit[data-id]').forEach((b) => (b.onclick = () => openAsset(b.dataset.id)));
+  document.querySelectorAll('[data-id]').forEach((el) => (el.onclick = () => openAsset(el.dataset.id)));
   renderMap(wtgGroups, elsewhere);
+}
+
+/** The level shown in the Fuel column: the fuel field, else the first percentage field. */
+function levelField(a) {
+  const nums = a.type.fields.filter((f) => f.scope === 'check' && f.type === 'number');
+  return nums.find((f) => /fuel/i.test(f.key)) || nums.find((f) => f.unit === '%') || null;
+}
+
+function fuelCell(a) {
+  const f = levelField(a);
+  const v = f && a.check ? a.check.data[f.key] : null;
+  if (v == null) return '<span class="muted">—</span>';
+  const pct = f.max ? Math.max(0, Math.min(100, (v / f.max) * 100)) : v;
+  const low = a.alerts.some((x) => x.key === f.key);
+  return `<span class="fuel"><span class="fuel-bar${low ? ' low' : ''}" aria-hidden="true"><span style="width:${pct}%"></span></span>${esc(formatValue(f, v))}</span>`;
+}
+
+function warnCell(a) {
+  if (!a.alerts.length) return '';
+  const text = a.alerts.map((x) => x.text).join('; ');
+  return `<span class="warn-sym" title="${esc(text)}" role="img" aria-label="Warning: ${esc(text)}">⚠</span>`;
+}
+
+function checkedCell(a) {
+  if (!a.check) return '<span class="muted">not scanned</span>';
+  return `<span class="${a.stale ? 'stale' : ''}">${esc(ago(a.check.recorded_at))}</span>`;
+}
+
+function movedTag(a) {
+  return a.last?.kind === 'move' ? `<div class="muted moved-tag">placed by hand${a.last.user_name ? ` (${esc(a.last.user_name)})` : ''}</div>` : '';
 }
 
 function elsewhereCard(units) {
@@ -128,11 +170,9 @@ function elsewhereCard(units) {
         ? `<a href="https://www.openstreetmap.org/?mlat=${a.last.lat}&mlon=${a.last.lon}#map=14/${a.last.lat}/${a.last.lon}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${a.last.lat.toFixed(4)}, ${a.last.lon.toFixed(4)}</a>`
         : 'position unknown';
       return `<button type="button" class="unit" data-id="${a.id}">
-        <div class="unit-kind">${esc(kindOf(a))}</div>
-        <div class="unit-vals">At ${pos}</div>
-        <div class="unit-vals">${unitValues(a)}</div>
-        ${a.alerts.length ? `<div>${a.alerts.map((x) => `<span class="badge badge-danger">${esc(x.text)}</span>`).join(' ')}</div>` : ''}
-        <div class="unit-vals">Checked ${esc(ago(a.last.recorded_at))}${a.last.user_name ? ` by ${esc(a.last.user_name)}` : ''}</div>
+        <div class="unit-kind">${esc(kindOf(a))} ${warnCell(a)}</div>
+        <div class="unit-vals">At ${pos} · ${fuelCell(a)}</div>
+        <div class="unit-vals">Checked ${a.check ? esc(ago(a.check.recorded_at)) : '—'}${a.last.user_name ? ` by ${esc(a.last.user_name)}` : ''}</div>
       </button>`;
     }).join('')}
   </section>`;
@@ -145,26 +185,59 @@ function summaryChips(units) {
     .map(([k, n]) => `<span class="kind-chip">${n} × ${esc(k)}</span>`).join('')}</div>`;
 }
 
-function unitValues(a) {
-  // Answers fixed by the location (fuel cube on the SOV) say nothing, so leave them out.
-  const fixed = new Set(fixedAt(a.type.fields, a.last.location_kind).map((f) => f.key));
-  return a.type.fields.filter((f) => f.scope === 'check' && f.type !== 'multiselect' && !fixed.has(f.key) && a.last.data[f.key] != null)
-    .map((f) => `${esc(f.label)} <b>${esc(formatValue(f, a.last.data[f.key]))}</b>`).join(' · ');
+// ---------------------------------------------------------------- assign a location by hand
+
+function locationOptions(selectedId = '') {
+  const active = locations.filter((l) => l.active);
+  const opt = (l) => `<option value="${esc(l.id)}"${l.id === selectedId ? ' selected' : ''}>${esc(l.name)}</option>`;
+  const sovs = active.filter((l) => l.kind === 'SOV');
+  const wtgs = active.filter((l) => l.kind === 'WTG').sort((x, y) => x.name.localeCompare(y.name, undefined, { numeric: true }));
+  return '<option value="">Select…</option>' +
+    (sovs.length ? `<optgroup label="Vessel (SOV)">${sovs.map(opt).join('')}</optgroup>` : '') +
+    (wtgs.length ? `<optgroup label="Turbines (WTG)">${wtgs.map(opt).join('')}</optgroup>` : '');
 }
 
-function locationCard(g) {
-  const units = [...g.units].sort((x, y) => kindOf(x).localeCompare(kindOf(y), undefined, { numeric: true }));
-  const attention = units.some((a) => a.alerts.length);
-  return `<section class="loc-card${attention ? ' attention' : ''}">
-    <h3><span>${esc(g.location.name)}</span>${attention ? '<span class="badge badge-danger">needs attention</span>' : ''}</h3>
-    ${units.length ? summaryChips(units) : '<p class="empty-note">Nothing on board.</p>'}
-    ${units.map((a) => `<button type="button" class="unit" data-id="${a.id}">
-      <div class="unit-kind">${esc(kindOf(a))}</div>
-      <div class="unit-vals">${unitValues(a)}</div>
-      ${a.alerts.length ? `<div>${a.alerts.map((x) => `<span class="badge badge-danger">${esc(x.text)}</span>`).join(' ')}</div>` : ''}
-      <div class="unit-vals">Checked ${esc(ago(a.last.recorded_at))}${a.stale ? ' <span class="badge badge-warn">over a week ago</span>' : ''}</div>
-    </button>`).join('')}
-  </section>`;
+function fillAssignLists() {
+  $('serial-list').innerHTML = assets.map((a) =>
+    `<option value="${esc(a.serial)}">${esc(kindOf(a))}${a.last?.location_name ? ` · ${esc(a.last.location_name)}` : ''}</option>`).join('');
+  const keep = $('as-location').value;
+  $('as-location').innerHTML = locationOptions(keep);
+}
+
+function findBySerial(text) {
+  const q = norm(text);
+  return q ? assets.find((a) => norm(a.serial) === q || a.tags.some((t) => norm(t.code) === q)) : null;
+}
+
+function assignHint() {
+  const a = findBySerial($('as-serial').value);
+  $('as-hint').textContent = !$('as-serial').value.trim() ? ''
+    : a ? `${kindOf(a)} · now ${a.last ? `at ${a.last.location_name || 'a GPS position'}` : 'not placed yet'}`
+    : 'No equipment with this serial number.';
+}
+
+async function onAssign(e) {
+  e.preventDefault();
+  const a = findBySerial($('as-serial').value);
+  const locId = $('as-location').value;
+  if (!a) { $('as-hint').textContent = 'No equipment with this serial number.'; $('as-serial').focus(); return; }
+  if (!locId) { $('as-location').focus(); return; }
+  await moveAsset(a, locId);
+  $('as-serial').value = '';
+  $('as-hint').textContent = '';
+}
+
+async function moveAsset(a, locId) {
+  const loc = locations.find((l) => l.id === locId);
+  try {
+    await api(`/api/assets/${a.id}/move`, { method: 'POST', body: { location_id: locId, recorded_by: session.user?.name } });
+    toast(`${kindOf(a)} (${a.serial}) placed at ${loc?.name}`, 'ok');
+    await load();
+    return true;
+  } catch (err) {
+    toast(err.message, 'error');
+    return false;
+  }
 }
 
 function sourceBadge(r) {
@@ -200,14 +273,14 @@ function renderMap(wtgGroups, elsewhere = []) {
     bounds.push([l.lat, l.lon]);
   }
   for (const g of wtgGroups) {
-    if (g.location.lat == null) continue;
+    if (g.lat == null) continue;
     const alert = g.units.some((a) => a.alerts.length);
     const icon = L.divIcon({ className: '', html: `<div class="map-count${alert ? ' alert' : ''}">${g.units.length}</div>`, iconSize: [28, 28] });
     const counts = new Map();
     for (const a of g.units) counts.set(kindOf(a), (counts.get(kindOf(a)) || 0) + 1);
-    const html = `<b>${esc(g.location.name)}</b><br>${[...counts].map(([k, n]) => `${n} × ${esc(k)}`).join('<br>')}` +
-      (alert ? '<br><span style="color:#c0392b">⚠ needs attention</span>' : '');
-    L.marker([g.location.lat, g.location.lon], { icon, zIndexOffset: 1000 }).bindPopup(html).addTo(markerLayer);
+    const html = `<b>${esc(g.name)}</b><br>${[...counts].map(([k, n]) => `${n} × ${esc(k)}`).join('<br>')}` +
+      (alert ? '<br><span style="color:#c0392b">⚠ warning</span>' : '');
+    L.marker([g.lat, g.lon], { icon, zIndexOffset: 1000 }).bindPopup(html).addTo(markerLayer);
   }
   // Units elsewhere get their own pin at the phone's position (not included in the
   // initial zoom, which stays on the wind farm).
@@ -231,12 +304,17 @@ async function openAsset(id) {
     const { asset, readings } = await api(`/api/assets/${id}`);
     const type = typeOf(asset);
     const checks = type.fields.filter((f) => f.scope === 'check');
+    const lastCheck = readings.find((r) => r.kind !== 'move');
     drawer.innerHTML = `
       <div class="row" style="justify-content:space-between">
         <h2 id="d-title" style="margin:0">${esc(kindOf({ ...asset, type }))}</h2>
         <button class="btn" type="button" id="d-close">Close</button>
       </div>
-      <p class="muted">${readings[0] ? `At ${esc(readings[0].location_name || 'phone GPS position (elsewhere)')} · checked ${esc(ago(readings[0].recorded_at))}` : 'Not scanned yet'}</p>
+      <p class="muted">${readings[0] ? `At ${esc(readings[0].location_name || 'phone GPS position (elsewhere)')}` : 'No location yet'}${lastCheck ? ` · checked ${esc(ago(lastCheck.recorded_at))}` : ' · not scanned yet'}</p>
+      <form class="row" id="d-move" style="align-items:end;margin-bottom:8px">
+        <div class="field grow" style="margin:0"><label for="d-move-loc">Move to</label><select id="d-move-loc">${locationOptions()}</select></div>
+        <button class="btn" type="submit">Assign</button>
+      </form>
       <dl class="kv">${type.fields.filter((f) => f.scope === 'asset').map((f) =>
         `<dt>${esc(f.label)}</dt><dd>${esc(formatValue(f, asset.attributes[f.key]))}</dd>`).join('')}</dl>
       <p class="muted" style="font-size:.85rem">Serial ${esc(asset.serial)}${asset.name ? ` · ${esc(asset.name)}` : ''}</p>
@@ -245,12 +323,19 @@ async function openAsset(id) {
         <thead><tr><th>When</th><th>Location</th>${checks.map((f) => `<th>${esc(f.label)}</th>`).join('')}<th>By</th></tr></thead>
         <tbody>${readings.map((r) => `<tr>
           <td>${esc(fmtTime(r.recorded_at))}</td>
-          <td>${r.location_name ? esc(r.location_name) : r.lat != null ? `Elsewhere (${r.lat.toFixed(4)}, ${r.lon.toFixed(4)})` : '?'} ${sourceBadge(r)}${r.distance_m != null ? `<div class="muted">${Math.round(r.distance_m)} m from WTG</div>` : ''}</td>
+          <td>${r.location_name ? esc(r.location_name) : r.lat != null ? `Elsewhere (${r.lat.toFixed(4)}, ${r.lon.toFixed(4)})` : '?'} ${r.kind === 'move' ? '<span class="badge">placed by hand</span>' : sourceBadge(r)}${r.distance_m != null ? `<div class="muted">${Math.round(r.distance_m)} m from WTG</div>` : ''}</td>
           ${checks.map((f) => `<td>${esc(formatValue(f, r.data[f.key]))}</td>`).join('')}
           <td>${esc(r.user_name || '')}${r.notes ? `<div class="muted">${esc(r.notes)}</div>` : ''}</td>
         </tr>`).join('') || `<tr><td colspan="${checks.length + 3}" class="muted">No readings yet.</td></tr>`}</tbody>
       </table></div>`;
     $('d-close').onclick = () => drawer.classList.add('hidden');
+    $('d-move').onsubmit = async (e) => {
+      e.preventDefault();
+      const locId = $('d-move-loc').value;
+      if (!locId) return $('d-move-loc').focus();
+      const a = assets.find((x) => x.id === asset.id) || { ...asset, type };
+      if (await moveAsset(a, locId)) openAsset(asset.id);
+    };
     $('d-close').focus();
   } catch (e) {
     drawer.innerHTML = `<p class="field-error">${esc(e.message)}</p><button class="btn" onclick="this.parentElement.classList.add('hidden')">Close</button>`;
@@ -263,13 +348,13 @@ async function exportCsv() {
   try {
     const { readings } = await api('/api/readings?limit=5000');
     const keys = [...new Set(types.flatMap((t) => t.fields.filter((f) => f.scope === 'check').map((f) => f.key)))];
-    const head = ['recorded_at', 'serial', 'type', 'location', 'location_kind', 'location_source', 'gps_status', 'lat', 'lon', 'accuracy_m', 'distance_m', ...keys, 'notes', 'user'];
+    const head = ['recorded_at', 'kind', 'serial', 'type', 'location', 'location_kind', 'location_source', 'gps_status', 'lat', 'lon', 'accuracy_m', 'distance_m', ...keys, 'notes', 'user'];
     const cell = (v) => {
       const s = Array.isArray(v) ? v.join('; ') : v == null ? '' : String(v);
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
     const lines = [head.join(',')].concat(readings.map((r) => [
-      r.recorded_at, r.serial, r.type_id, r.location_name, r.location_kind, r.location_source, r.gps_status,
+      r.recorded_at, r.kind, r.serial, r.type_id, r.location_name, r.location_kind, r.location_source, r.gps_status,
       r.lat, r.lon, r.accuracy_m, r.distance_m, ...keys.map((k) => r.data[k]), r.notes, r.user_name,
     ].map(cell).join(',')));
     const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
