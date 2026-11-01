@@ -253,6 +253,10 @@ function fieldCard(f, i) {
       <option value="false"${f.sovValue === false ? ' selected' : ''}>Don't ask - always No</option>
       <option value="true"${f.sovValue === true ? ' selected' : ''}>Don't ask - always Yes</option>
     </select></div>` : ''}
+    ${f.type === 'boolean' && f.scope === 'check' ? `<div class="field"><label>When the answer is Yes</label><select data-k="pairWith">
+      <option value="">Nothing else</option>
+      ${types.filter((t) => t.id !== $('t-select').value).map((t) => `<option value="${esc(t.id)}"${f.pairWith === t.id ? ' selected' : ''}>Scan and link a ${esc(t.name.toLowerCase())}</option>`).join('')}
+    </select></div>` : ''}
     ${alertControls(f)}
     ${f.key ? `<p class="muted" style="margin:0;font-size:.8rem">Data key: <code>${esc(f.key)}</code></p>` : ''}
   </div>`;
@@ -297,7 +301,7 @@ function updateField(f, k, v) {
   const num = (x) => (x === '' || x == null ? undefined : Number(x));
   switch (k) {
     case 'label': f.label = v; break;
-    case 'scope': f.scope = v; if (v !== 'check') delete f.sovValue; break;
+    case 'scope': f.scope = v; if (v !== 'check') { delete f.sovValue; delete f.pairWith; } break;
     case 'required': if (v) f.required = true; else delete f.required; break;
     case 'type':
       f.type = v;
@@ -306,8 +310,10 @@ function updateField(f, k, v) {
       if (v !== 'number') for (const x of ['unit', 'min', 'max', 'step']) delete f[x];
       delete f.alert;
       delete f.sovValue;
+      delete f.pairWith;
       break;
     case 'sovValue': if (v === '') delete f.sovValue; else f.sovValue = v === 'true'; break;
+    case 'pairWith': if (v === '') delete f.pairWith; else f.pairWith = v; break;
     case 'options': f.options = parseOptions(v); break;
     case 'unit': if (v.trim()) f.unit = v.trim(); else delete f.unit; break;
     case 'min': case 'max': case 'step': {

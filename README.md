@@ -33,6 +33,21 @@ hand, plus the GPS status, raw fix, accuracy and distance to the WTG.
 
 `"GEO_CHECK": "off"` turns the suggestion off completely, and the location is always picked by hand.
 
+## Generators and fuel cubes
+
+Fuel cubes are tracked equipment too, with their own QR label and fuel level.
+
+* Scanning a **generator** and answering **Fuel cube connected: Yes** pops up
+  **Scan the fuel cube**. The scanned cube is linked to the generator and recorded at the same location.
+* Scanning a **fuel cube** at a WTG pops up **Scan the generator** (or *Not connected to a generator*).
+* There is **no popup** when the phone already knows that the two are together at that WTG.
+  Both units must be linked to each other and last seen there. The check works offline, including
+  scans still waiting to sync.
+* Scanning the wrong kind of label in the popup is refused, for example a fuel cube label when the generator is asked for.
+* The overview shows linked units as "⛓ with Fuel cube" / "⛓ with Generator 350 kVA".
+* This is set up per question, not hard-coded. In Setup → Equipment types, any yes/no question has
+  **When the answer is Yes → Scan and link a …**.
+
 ## Offline and sync
 
 * The app shell is cached by a service worker (`public/sw.js`). Assets, tags and

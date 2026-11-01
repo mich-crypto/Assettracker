@@ -314,3 +314,11 @@ tbody tr.clickable:hover { background: var(--surface-2); }
   .assign .row > .field { flex: 1 1 100%; }
   .assign .btn { width: 100%; }
 }
+
+/* ---------- linking a generator and fuel cube */
+.pair-dialog { border: 0; border-radius: var(--radius); padding: 20px; width: min(420px, calc(100% - 32px)); background: var(--surface); color: var(--text); box-shadow: 0 10px 40px rgb(0 0 0 / 35%); }
+.pair-dialog::backdrop { background: rgb(0 0 0 / 50%); }
+.pair-dialog h2 { margin-bottom: 6px; }
+.pair-box { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 14px; display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+.pair-box.ok { border-color: var(--ok); background: var(--ok-bg); }
+.pair-dialog .stack > * { width: 100%; }

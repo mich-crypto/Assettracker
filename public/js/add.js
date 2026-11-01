@@ -193,7 +193,7 @@ const RENDER = {
           <rect x="22" y="120" width="20" height="10" fill="currentColor"/><rect x="158" y="120" width="20" height="10" fill="currentColor"/>
         </svg>
       </div>
-      <p>Stick a new QR label on the <b>generator window</b>.</p>
+      <p>Stick a new QR label on the <b>${state.typeId === 'generator' ? 'generator window' : esc(type().name.toLowerCase())}</b>.</p>
       <ul class="muted">
         <li>Clean and dry the spot first.</li>
         <li>Press the label flat so it can be scanned easily.</li>

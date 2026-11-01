@@ -8,14 +8,16 @@ import {
 import { applyLocationRules, evaluateAlerts, fixedAt, normalizeValues } from './fields.js';
 import { collectFields, renderFields, showErrors } from './forms.js';
 import { distanceM, resolveLocation } from './geo.js';
+import { knownPartner, pairingFor } from './pairing.js';
 import { nfcSupported, parseTagText, readNfc, scanQr } from './scan.js';
-import { outbox } from './store.js';
+import { cache, outbox } from './store.js';
 
 const user = requireLogin('field');
 const $ = (id) => document.getElementById(id);
 
 let ref = null;          // offline reference data (types, locations, assets)
-let current = null;      // { asset, type, code }
+let current = null;      // { asset, type, code, pairing, pair }
+let pending = [];        // outbox readings, so offline links count as known
 let bestFix = null;      // most recent GPS fix
 let resolution = null;   // result of resolveLocation
 let chosenLocation = null;
@@ -68,6 +70,22 @@ async function init() {
     $('btn-loc-manual').classList.add('hidden');
   };
   $('reading-form').onsubmit = onSave;
+  $('pair-scan').onclick = async () => { const t = await scanQr(); if (t) pairWithCode(parseTagText(t)); };
+  $('pair-type').onclick = () => { const c = prompt('Code printed under the QR label:'); if (c) pairWithCode(parseTagText(c)); };
+  $('pair-skip').onclick = () => $('pair-dialog').close();
+  if (nfcSupported()) {
+    $('pair-nfc').classList.remove('hidden');
+    $('pair-nfc').onclick = async () => {
+      const ctrl = new AbortController();
+      setTimeout(() => ctrl.abort(), 30_000);
+      try {
+        const { code, serialCode } = await readNfc(ctrl.signal);
+        pairWithCode(findAsset(code) ? code : findAsset(serialCode) ? serialCode : code);
+      } catch (e) {
+        if (e.name !== 'AbortError') $('pair-error').textContent = e.message || 'NFC read failed';
+      }
+    };
+  }
   window.addEventListener('at:outbox', renderOutbox);
   window.addEventListener('hashchange', openFromHash);
   openFromHash();
@@ -158,6 +176,87 @@ function setChosen(loc) {
     .map((f) => `${esc(f.label)}: <b>${f.sovValue ? 'Yes' : 'No'}</b>`);
   $('fixed-note').innerHTML = notes.length ? `On the vessel: ${notes.join(' · ')}` : '';
   $('fixed-note').classList.toggle('hidden', !notes.length);
+  // Scanning a fuel cube at a turbine: ask for its generator (once per reading).
+  if (current.pairing?.direction === 'reverse' && !current.prompted && !current.pair && loc?.kind === 'WTG') offerPair();
+  renderPairBox();
+}
+
+// ---------------------------------------------------------------- linking (generator <-> fuel cube)
+
+/**
+ * Updates this phone's copy of where a unit is and what it is connected to, so
+ * the next scan (even offline, even after the outbox has synced) knows it.
+ */
+function rememberState(r) {
+  const a = ref.assets.find((x) => x.id === r.asset_id);
+  if (a && (!a.state || r.recorded_at >= a.state.at)) {
+    a.state = { location_id: r.location_id, linked_asset_id: r.linked_asset_id ?? null, at: r.recorded_at };
+  }
+}
+
+const typeOf = (a) => ref.types.find((t) => t.id === a.type_id) || { name: a.type_id, fields: [] };
+const partnerName = () => current.pairing.partnerType.name;
+
+/** Links the partner without asking when both are already known together here; otherwise asks to scan it. */
+function offerPair({ force = false } = {}) {
+  if (!current?.pairing) return;
+  current.prompted = true;
+  const locId = chosenLocation && chosenLocation !== HERE ? chosenLocation.id : null;
+  const partner = !force && current.asset && locId ? knownPartner(current.asset, locId, ref.assets, pending) : null;
+  if (partner && partner.type_id === current.pairing.partnerType.id) {
+    current.pair = { asset: partner, code: partner.tags[0]?.code ?? null, known: true };
+    renderPairBox();
+    return;
+  }
+  const forward = current.pairing.direction === 'forward';
+  const own = current.type.name.toLowerCase();
+  $('pair-title').textContent = `Scan the ${partnerName().toLowerCase()}`;
+  $('pair-text').textContent = forward
+    ? `Scan the QR label on the ${partnerName().toLowerCase()} connected to this ${own}.`
+    : `Is this ${own} connected to a ${partnerName().toLowerCase()}? Scan the ${partnerName().toLowerCase()}'s QR label.`;
+  $('pair-skip').textContent = forward ? 'Skip' : `Not connected to a ${partnerName().toLowerCase()}`;
+  $('pair-error').textContent = '';
+  if (!$('pair-dialog').open) $('pair-dialog').showModal();
+}
+
+function pairWithCode(code) {
+  if (!code) return;
+  const asset = findAsset(code);
+  const want = current.pairing.partnerType;
+  if (asset && asset.id === current.asset?.id) {
+    $('pair-error').textContent = `That is this ${current.type.name.toLowerCase()} itself. Scan the ${want.name.toLowerCase()}.`;
+    return;
+  }
+  if (asset && asset.type_id !== want.id) {
+    $('pair-error').textContent = `That label is on a ${typeOf(asset).name.toLowerCase()}. Scan the ${want.name.toLowerCase()}.`;
+    return;
+  }
+  current.pair = { asset, code, known: false };
+  $('pair-dialog').close();
+  if (navigator.vibrate) navigator.vibrate(80);
+  renderPairBox();
+}
+
+function renderPairBox() {
+  const box = $('pair-box');
+  const p = current?.pairing;
+  const fixed = p && p.direction === 'forward' && fixedAt(current.type.fields, chosenLocation?.kind).some((f) => f.key === p.field.key);
+  const answeredYes = p?.direction === 'forward' && $('check-fields').querySelector(`[name="${p.field.key}"][value="true"]:checked`);
+  const relevant = p && !fixed && (current.pair || answeredYes || (p.direction === 'reverse' && chosenLocation?.kind === 'WTG'));
+  box.classList.toggle('hidden', !relevant);
+  if (!relevant) return;
+  const pr = current.pair;
+  box.classList.toggle('ok', !!pr);
+  box.innerHTML = pr
+    ? `<div><b>${esc(pr.asset ? kindOf(pr.asset, typeOf(pr.asset)) : partnerName())}</b>${pr.code ? ` · tag ${esc(pr.code)}` : ''}
+        <div class="muted">${pr.known ? 'Already together here' : pr.asset ? 'Linked ✓' : 'Linked ✓ (not in the offline list yet)'}</div></div>
+       <button type="button" class="link-btn" id="pair-change">${pr.known ? 'Scan another' : 'Change'}</button>`
+    : `<div class="muted">Not linked to a ${esc(partnerName().toLowerCase())}.</div>
+       <button type="button" class="link-btn" id="pair-change">Scan ${esc(partnerName().toLowerCase())}</button>`;
+  $('pair-change').onclick = () => {
+    current.pair = null;
+    offerPair({ force: true });
+  };
 }
 
 function labelFor(l) {
@@ -280,8 +379,21 @@ function showReading() {
   $('a-sub').textContent = `Tag ${code}`;
   $('a-unknown').classList.toggle('hidden', !!asset);
   $('a-unknown').textContent = 'This tag is not in the offline asset list. The reading will be matched to its asset when it syncs.';
+  current.pairing = pairingFor(ref.types, type);
+  current.pair = null;
+  current.prompted = false;
   renderFields($('check-fields'), type.fields, 'check');
+  if (current.pairing?.direction === 'forward') {
+    // "Fuel cube connected: Yes" -> scan the fuel cube.
+    $('check-fields').querySelectorAll(`[name="${current.pairing.field.key}"]`).forEach((r) => {
+      r.addEventListener('change', () => {
+        if (r.value === 'true' && r.checked) offerPair();
+        else if (r.value === 'false' && r.checked) { current.pair = null; renderPairBox(); }
+      });
+    });
+  }
   setChosen(null);
+  renderPairBox();
   $('notes').value = '';
   $('loc-filter').value = '';
   $('loc-manual').classList.add('hidden');
@@ -360,7 +472,34 @@ async function onSave(e) {
     // Local-only display label; stripped before upload.
     label: `${current.asset ? kindOf(current.asset, current.type) : current.type.name} · tag ${current.code} @ ${atHere ? labelFor(HERE) : chosenLocation.name}`,
   };
+  // Link to the scanned/known partner (only when the forward question was answered Yes).
+  const p = current.pairing;
+  const linkOn = p && current.pair && (p.direction === 'reverse' || values[p.field.key] === true);
+  if (linkOn) {
+    reading.linked_asset_id = current.pair.asset?.id ?? null;
+    reading.linked_tag_code = current.pair.code;
+  }
   await outbox.put(reading);
+  rememberState(reading);
+  if (linkOn && current.pair.asset && !current.pair.known) {
+    // The partner is now at the same place, connected to this unit.
+    const pa = current.pair.asset;
+    const partnerReading = {
+      ...reading,
+      id: crypto.randomUUID(),
+      asset_id: pa.id,
+      tag_code: current.pair.code,
+      kind: 'move',
+      data: {},
+      notes: null,
+      linked_asset_id: current.asset?.id ?? null,
+      linked_tag_code: current.code,
+      label: `${kindOf(pa, typeOf(pa))} · tag ${current.pair.code} @ ${atHere ? labelFor(HERE) : chosenLocation.name} (linked)`,
+    };
+    await outbox.put(partnerReading);
+    rememberState(partnerReading);
+  }
+  cache.set('bootstrap', ref).catch(() => {});
   const alerts = evaluateAlerts(current.type.fields, values);
   toast(alerts.length ? `Saved - alert: ${alerts.map((a) => a.text).join('; ')}` : 'Reading saved', alerts.length ? 'error' : 'ok');
   closeReading();
@@ -371,6 +510,7 @@ async function onSave(e) {
 
 async function renderOutbox() {
   const items = (await outbox.all()).sort((a, b) => a.recorded_at.localeCompare(b.recorded_at));
+  pending = items;
   const box = $('outbox');
   if (!items.length) {
     box.textContent = 'Nothing queued - all readings are on the server.';

@@ -10,6 +10,8 @@
 //   step:  numbers only, value must be min + k*step (e.g. fuel in 25% steps)
 //   sovValue: yes/no fields only; on the vessel (SOV) the question is not asked
 //          and this value is recorded (e.g. fuel cube: never connected on the SOV)
+//   pairWith: yes/no fields only; the id of an equipment type to scan and link
+//          when the answer is Yes (e.g. generator "Fuel cube connected" -> fuel cube)
 //   alert: { below: n } | { atMost: n } | { above: n } | { equals: value } | { any: true }
 
 export const FIELD_TYPES = ['number', 'text', 'boolean', 'select', 'multiselect', 'date'];
@@ -38,6 +40,9 @@ export function validateFieldDefs(defs) {
     if (f.step != null && !(typeof f.step === 'number' && f.step > 0)) errors.push(`${where}: step must be a positive number`);
     if ('sovValue' in f && (f.type !== 'boolean' || typeof f.sovValue !== 'boolean')) {
       errors.push(`${where}: a fixed vessel answer is only possible for yes/no fields`);
+    }
+    if ('pairWith' in f && (f.type !== 'boolean' || f.scope !== 'check' || typeof f.pairWith !== 'string' || !f.pairWith)) {
+      errors.push(`${where}: linking to other equipment is only possible for yes/no questions asked on every scan`);
     }
     for (const k of ['min', 'max']) {
       if (f[k] != null && typeof f[k] !== 'number') errors.push(`${where}: ${k} must be a number`);

@@ -59,3 +59,25 @@ VALUES
    'demo-wtg-B03', 'gps', 'ok', 54.00900, 6.03060, 8, 6, '{"fuel_level":100,"fuel_cube":true,"alarms":[]}', 'Demo reading', 'AT-DEMO0007'),
   ('00000000-0000-4000-8000-000000000702', 'demo-gen-07', strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-6 hours'),
    'demo-wtg-B04', 'gps', 'ok', 54.00890, 6.04600, 11, 14, '{"fuel_level":75,"fuel_cube":true,"alarms":[]}', 'Demo reading - moved', 'AT-DEMO0007');
+
+-- Demo fuel cubes (needs migration 0007). Cube 1 is connected to GEN-350-001 at
+-- WTG A01; cube 2 stands at WTG A03 without a known generator; cube 3 is new.
+INSERT OR IGNORE INTO assets (id, type_id, serial, name, attributes) VALUES
+  ('demo-cube-01', 'fuel-cube', 'FC-001', 'Demo - with generator at A01', '{}'),
+  ('demo-cube-02', 'fuel-cube', 'FC-002', 'Demo - at A03, not linked',    '{}'),
+  ('demo-cube-03', 'fuel-cube', 'FC-003', 'Demo - new',                   '{}');
+
+INSERT OR IGNORE INTO tags (code, asset_id, kind) VALUES
+  ('AT-DEMOC001', 'demo-cube-01', 'qr'),
+  ('AT-DEMOC002', 'demo-cube-02', 'qr'),
+  ('AT-DEMOC003', 'demo-cube-03', 'qr');
+
+INSERT OR IGNORE INTO readings
+  (id, asset_id, recorded_at, location_id, location_source, gps_status, lat, lon, accuracy_m, distance_m, data, notes, tag_code, linked_asset_id)
+VALUES
+  ('00000000-0000-4000-8000-000000000901', 'demo-cube-01', strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-3 hours'),
+   'demo-wtg-A01', 'gps', 'ok', 54.00040, 6.00020, 8, 47, '{"fuel_level":75}', 'Demo reading', 'AT-DEMOC001', 'demo-gen-01'),
+  ('00000000-0000-4000-8000-000000000902', 'demo-cube-02', strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-2 hours'),
+   'demo-wtg-A03', 'gps', 'ok', 54.00020, 6.03050, 7, 24, '{"fuel_level":50}', 'Demo reading', 'AT-DEMOC002', NULL);
+
+UPDATE readings SET linked_asset_id = 'demo-cube-01' WHERE id = '00000000-0000-4000-8000-000000000101';

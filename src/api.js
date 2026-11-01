@@ -136,11 +136,17 @@ router.add('PATCH', '/api/users/:id', async ({ request, env, user, params }) => 
 // and the tag -> asset index. Fetched whenever the app is online.
 router.add('GET', '/api/bootstrap', async ({ env, user }) => {
   guard(user);
-  const [types, locations, assets] = await env.DB.batch([
+  const [types, locations, assets, states] = await env.DB.batch([
     env.DB.prepare('SELECT * FROM asset_types WHERE active = 1 ORDER BY name'),
     env.DB.prepare('SELECT * FROM locations WHERE active = 1 ORDER BY kind DESC, name'),
     env.DB.prepare(`${ASSET_SELECT} WHERE a.status = 'active' ORDER BY a.serial`),
+    // Where each unit was last seen and what it was connected to, so the phone
+    // knows offline whether a generator and fuel cube are already together.
+    env.DB.prepare(`SELECT asset_id, location_id, linked_asset_id, recorded_at FROM (
+      SELECT r.*, ROW_NUMBER() OVER (PARTITION BY r.asset_id ORDER BY r.recorded_at DESC, r.received_at DESC) AS rn
+      FROM readings r) WHERE rn = 1`),
   ]);
+  const stateOf = new Map(states.results.map((r) => [r.asset_id, r]));
   return json({
     user,
     serverTime: nowIso(),
@@ -149,7 +155,10 @@ router.add('GET', '/api/bootstrap', async ({ env, user }) => {
     settings: { geoCheck: env.GEO_CHECK !== 'off' },
     types: types.results.map(typeOut),
     locations: locations.results,
-    assets: assets.results.map(assetOut),
+    assets: assets.results.map((a) => {
+      const st = stateOf.get(a.id);
+      return { ...assetOut(a), state: st ? { location_id: st.location_id, linked_asset_id: st.linked_asset_id, at: st.recorded_at } : null };
+    }),
   });
 });
 
@@ -293,7 +302,7 @@ router.add('GET', '/api/assets', async ({ env, user, url }) => {
       (SELECT group_concat(t.code || char(30) || t.kind, char(31)) FROM tags t WHERE t.asset_id = a.id) AS tag_codes,
       l.id AS r_id, l.recorded_at AS r_recorded_at, l.location_id AS r_location_id, l.location_source AS r_location_source,
       l.gps_status AS r_gps_status, l.lat AS r_lat, l.lon AS r_lon, l.accuracy_m AS r_accuracy_m, l.data AS r_data,
-      l.notes AS r_notes, l.kind AS r_kind, COALESCE(u.name, l.recorded_by) AS r_user_name,
+      l.notes AS r_notes, l.kind AS r_kind, l.linked_asset_id AS r_linked_asset_id, COALESCE(u.name, l.recorded_by) AS r_user_name,
       c.recorded_at AS c_recorded_at, c.data AS c_data,
       loc.name AS r_location_name, loc.kind AS r_location_kind, loc.lat AS r_location_lat, loc.lon AS r_location_lon
     FROM assets a
@@ -482,24 +491,33 @@ router.add('POST', '/api/readings/sync', async ({ request, env, user }) => {
       if (Number.isNaN(recordedAt.getTime())) { reject('Invalid recorded_at'); continue; }
       if (recordedAt.getTime() > Date.now() + 24 * 3600 * 1000) { reject('recorded_at is in the future (check phone clock)'); continue; }
       const type = types.get(asset.type_id);
-      const defs = type ? type.fields : [];
-      // e.g. fuel cube is never connected on the SOV, whatever the phone sent.
-      const data = applyLocationRules(defs, raw.data || {}, locationKinds.get(raw.location_id));
-      const { values, errors } = normalizeValues(defs, 'check', data);
-      if (Object.keys(errors).length) { reject(Object.values(errors).join('; ')); continue; }
+      const kind = raw.kind === 'move' ? 'move' : 'check';
+      let values = {};
+      if (kind === 'check') {
+        const defs = type ? type.fields : [];
+        // e.g. fuel cube is never connected on the SOV, whatever the phone sent.
+        const data = applyLocationRules(defs, raw.data || {}, locationKinds.get(raw.location_id));
+        const result = normalizeValues(defs, 'check', data);
+        if (Object.keys(result.errors).length) { reject(Object.values(result.errors).join('; ')); continue; }
+        values = result.values;
+      }
+      // The unit it was connected to (e.g. the fuel cube on this generator), by id or scanned tag.
+      const linked = assets.get(raw.linked_asset_id) ||
+        (raw.linked_tag_code ? assets.get(tagIndex.get(String(raw.linked_tag_code).toLowerCase())) : null);
       const source = raw.location_source === 'gps' ? 'gps' : 'manual';
       const gpsStatus = GPS_STATUSES.includes(raw.gps_status) ? raw.gps_status : 'unavailable';
       stmts.push(
         env.DB.prepare(
           `INSERT OR IGNORE INTO readings
-            (id, asset_id, recorded_at, user_id, location_id, location_source, gps_status, lat, lon, accuracy_m, distance_m, data, notes, tag_code, device_id, recorded_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            (id, asset_id, recorded_at, user_id, location_id, location_source, gps_status, lat, lon, accuracy_m, distance_m, data, notes, tag_code, device_id, recorded_by, kind, linked_asset_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).bind(
           id, asset.id, recordedAt.toISOString(), user.id, raw.location_id || null, source, gpsStatus,
           num(raw.lat, { min: -90, max: 90, name: 'lat' }), num(raw.lon, { min: -180, max: 180, name: 'lon' }),
           num(raw.accuracy_m, { min: 0, name: 'accuracy' }), num(raw.distance_m, { min: 0, name: 'distance' }),
           JSON.stringify(values), str(raw.notes, { max: 2000, name: 'notes' }), str(raw.tag_code, { max: 120 }),
           str(raw.device_id, { max: 80 }), user.id ? user.name : str(raw.recorded_by, { max: 100 }),
+          kind, linked && linked.id !== asset.id ? linked.id : null,
         ),
       );
       pending.push(id);

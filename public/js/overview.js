@@ -159,7 +159,13 @@ function checkedCell(a) {
 }
 
 function movedTag(a) {
-  return a.last?.kind === 'move' ? `<div class="muted moved-tag">placed by hand${a.last.user_name ? ` (${esc(a.last.user_name)})` : ''}</div>` : '';
+  // Connected unit (e.g. generator <-> fuel cube), if both are still at the same place.
+  const partner = a.last?.linked_asset_id && assets.find((x) => x.id === a.last.linked_asset_id);
+  const together = partner && partner.last?.linked_asset_id === a.id && partner.last?.location_id === a.last.location_id;
+  const link = together ? `<div class="muted moved-tag">⛓ with ${esc(kindOf(partner))}</div>` : '';
+  const moved = a.last?.kind === 'move' && !a.last.linked_asset_id
+    ? `<div class="muted moved-tag">placed by hand${a.last.user_name ? ` (${esc(a.last.user_name)})` : ''}</div>` : '';
+  return link + moved;
 }
 
 function elsewhereCard(units) {
