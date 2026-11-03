@@ -4,7 +4,7 @@ export const SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9-]{1,23}$/;
 
 export const RESERVED_SLUGS = new Set([
   'api', 't', 'js', 'css', 'vendor', 'icons', 'admin', 'field', 'add', 'warehouse', 'overview', 'project',
-  'index', 'login', 'setup', 'static', 'assets', 'public', 'sw', 'manifest', '404', 'favicon',
+  'invoice', 'billing', 'index', 'login', 'setup', 'static', 'assets', 'public', 'sw', 'manifest', '404', 'favicon',
 ]);
 
 export function validSlug(slug) {

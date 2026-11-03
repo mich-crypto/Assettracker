@@ -1,6 +1,7 @@
 import { router } from './api.js';
 import { verifySession } from './auth.js';
 import { HttpError, json } from './http.js';
+import { runBilling } from './billing.js';
 import { RESERVED_SLUGS, SLUG_RE } from '../public/js/projects.js';
 
 const SECURITY_HEADERS = {
@@ -103,6 +104,10 @@ export default {
     let response;
     if (path.startsWith('/api/')) {
       response = await handleApi(request, env, ctx);
+    } else if (/^\/invoice\/[A-Za-z0-9]+$/.test(path)) {
+      response = await env.ASSETS.fetch(new Request(new URL('/invoice', request.url), request));
+      response = new Response(response.body, response);
+      response.headers.set('x-robots-tag', 'noindex');
     } else if (path.startsWith('/t/') && path.length > 3) {
       response = await labelRedirect(request, env, decodeURIComponent(path.slice(3)));
     } else {
@@ -116,5 +121,10 @@ export default {
     const out = new Response(response.body, response);
     for (const [k, v] of Object.entries(SECURITY_HEADERS)) out.headers.set(k, v);
     return out;
+  },
+
+  // Daily: create (and, depending on the setting, issue and send) the invoices that are due.
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(runBilling(env).then((r) => console.log('billing', JSON.stringify(r))));
   },
 };

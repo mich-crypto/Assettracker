@@ -16,7 +16,7 @@ export class ApiError extends Error {
   }
 }
 
-const GLOBAL_API = ['/api/projects', '/api/types', '/api/auth', '/api/users', '/api/p/'];
+const GLOBAL_API = ['/api/projects', '/api/types', '/api/auth', '/api/users', '/api/billing', '/api/invoice', '/api/p/'];
 
 /** Calls the API. Project data lives under /api/p/<slug>; admin routes are global. */
 export async function api(apiPath, { method = 'GET', body } = {}) {

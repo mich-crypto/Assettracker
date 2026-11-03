@@ -16,7 +16,7 @@ has the link (or its QR code) sees that project only.
 | **Warehouse** | `/BLP/warehouse` | warehouse supervisor | Add equipment, *Refuelled*, *Serviced*, things to investigate, equipment list (edit, retire, attach label), import from Excel |
 | **Add equipment** | `/BLP/add` | warehouse supervisor | Step by step: type, rating / size, lifting points inspection date, serial number, stick the label, scan it |
 | **Overview** | `/BLP/overview` | site manager | What is on the vessel and on each turbine, fuel level, ⚠ warnings, map, service report, refuel planning, assign a location by serial number |
-| **Admin** | `/admin` | the owner | Create projects and hand out their QR code, settings, turbines, generic QR labels to print, equipment types |
+| **Admin** | `/admin` | the owner | Create projects and hand out their QR code, settings, turbines, generic QR labels to print, equipment types, **billing and invoices** |
 
 ## The guided scan (technicians)
 
@@ -48,6 +48,24 @@ The first time, a three-card introduction explains the steps.
 * **Settings per project:** location mode, GPS radius per turbine, wind farm area, NFC on/off.
 * **Close** makes a project read-only (export all readings to CSV first). **Delete** removes everything in it; you must type its link.
 * **No personal names** are stored. People are not asked who they are, and readings carry no user or device name.
+
+## Billing
+
+**Admin → Billing** invoices each project: a **startup fee** (on the first month's invoice) and a **monthly fee** billed in advance.
+
+* **Per project** (open the project): switch billing on, first billed month, fees, company, address, VAT number, VAT treatment
+  (charge VAT / reverse charge / none), invoice e-mail, customer PO.
+* **Billing settings:** your company details, IBAN, VAT %, currency, payment term, number prefix, text at the bottom, sender address.
+* **Automatic:** a daily cron (05:00 UTC) creates the invoices that are due. You choose what happens next: leave a **draft** to check,
+  **issue** it (number assigned), or **issue and e-mail** it. Safe to run repeatedly; one invoice per project per month.
+  *Create due invoices now* does the same on demand. Up to 12 months are caught up.
+* **Invoice life:** draft (editable) → issued (numbered 2026-0001, fixed) → sent → paid. Issued invoices are never deleted; *Void* frees the month again.
+  *Manual invoice* covers extra work. Overdue invoices get a *Reminder* button.
+* **Customer view:** every invoice has an unguessable link `/invoice/<token>` that shows a clean page; *Print or save as PDF* from there.
+* **E-mail:** sent through [Resend](https://resend.com). Set the secret `npx wrangler secret put RESEND_API_KEY`, verify your sender domain in Resend,
+  and fill in *Send invoices from* and *Site address*. Without it, *Send* opens your own e-mail program with the link.
+* Payments are marked by hand (no payment provider). A project with issued invoices cannot be deleted, only closed. CSV export for your accounting.
+* Check numbering, VAT and invoice wording with your accountant before sending real invoices.
 
 ## Location: testing and live
 
@@ -99,7 +117,7 @@ The D1 database `assetdatabase` is configured in `wrangler.jsonc`.
 ```bash
 npm install
 npx wrangler login
-npm run db:migrate:remote        # applies migrations 0001 ... 0009
+npm run db:migrate:remote        # applies migrations 0001 ... 0010
 npm run deploy
 ```
 

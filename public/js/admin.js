@@ -6,6 +6,7 @@ import { downloadBlob, printOnly, qrPng, qrSvg } from './print.js';
 import { newTagCode, tagUrl } from './scan.js';
 import { initTypesEditor } from './types-editor.js';
 import { validSlug } from './projects.js';
+import { initBilling } from './admin-billing.js';
 
 const $ = (id) => document.getElementById(id);
 const BASE_KEY = 'at.siteBase';
@@ -16,6 +17,7 @@ let locations = [];        // its locations
 let parsed = null;         // result of "Check the list"
 let map = null;
 let mapLayer = null;
+let billing = null;
 
 init();
 
@@ -51,6 +53,7 @@ async function init() {
   $('wtg-file').onchange = onFile;
   $('wtg-template').onclick = () => downloadBlob(new Blob(['name,latitude,longitude\nWTG A01,54.01230,6.54320\nWTG A02,54.01230,6.55820\n'], { type: 'text/csv' }), 'turbine-list-template.csv');
   $('lb-make').onclick = makeLabels;
+  billing = initBilling({ getProjects: () => projects, reloadProjects: loadProjects });
   await loadProjects();
   initTypesEditor().catch((e) => toast(e.message, 'error'));
 }
@@ -127,6 +130,7 @@ async function selectProject(id) {
   $('wtg-import').classList.add('hidden');
   $('wtg-text').value = '';
   renderLink();
+  billing.showProject(current);
   await loadLocations();
   $('project-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }

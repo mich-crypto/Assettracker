@@ -1,6 +1,8 @@
 import { can, hashPassword, ROLES, signSession, verifyPassword } from './auth.js';
 import { HttpError, json, num, parseJsonColumn, readJson, Router, str } from './http.js';
 import { validSlug } from '../public/js/projects.js';
+import { registerBilling } from './billing.js';
+import { VAT_MODES } from '../public/js/billing.js';
 import { applyLocationRules, normalizeValues, validateFieldDefs } from '../public/js/fields.js';
 
 export const router = new Router();
@@ -113,6 +115,33 @@ function projectFields(body, partial) {
   if (body.gps_radius_m !== undefined) out.gps_radius_m = num(body.gps_radius_m, { name: 'GPS radius', min: 10, max: 10000 }) ?? 300;
   if (body.farm_radius_km !== undefined) out.farm_radius_km = num(body.farm_radius_km, { name: 'wind farm area', min: 1, max: 100 }) ?? 20;
   if (body.nfc_enabled !== undefined) out.nfc_enabled = body.nfc_enabled ? 1 : 0;
+  // Billing (see src/billing.js)
+  if (body.billing_enabled !== undefined) out.billing_enabled = body.billing_enabled ? 1 : 0;
+  for (const k of ['billing_start', 'billing_end']) {
+    if (body[k] === undefined) continue;
+    const d = str(body[k], { max: 10 });
+    if (d && !/^\d{4}-\d{2}-\d{2}$/.test(d)) throw new HttpError(400, 'Billing dates must look like 2026-12-31');
+    out[k] = d;
+  }
+  for (const k of ['billing_startup_cents', 'billing_monthly_cents']) {
+    if (body[k] === undefined) continue;
+    const n = num(body[k], { name: 'fee', min: 0, max: 1e10 }) ?? 0;
+    if (!Number.isInteger(n)) throw new HttpError(400, 'Fees must be whole cents');
+    out[k] = n;
+  }
+  if (body.billing_vat_mode !== undefined) {
+    if (!VAT_MODES.includes(body.billing_vat_mode)) throw new HttpError(400, 'Invalid VAT treatment');
+    out.billing_vat_mode = body.billing_vat_mode;
+  }
+  if (body.billing_company !== undefined) out.billing_company = str(body.billing_company, { max: 120 });
+  if (body.billing_address !== undefined) out.billing_address = str(body.billing_address, { max: 400 });
+  if (body.billing_vat_id !== undefined) out.billing_vat_id = str(body.billing_vat_id, { max: 40 });
+  if (body.billing_reference !== undefined) out.billing_reference = str(body.billing_reference, { max: 80 });
+  if (body.billing_email !== undefined) {
+    const e = str(body.billing_email, { max: 120 });
+    if (e && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) throw new HttpError(400, 'Enter a valid billing e-mail address');
+    out.billing_email = e;
+  }
   return out;
 }
 
@@ -149,8 +178,11 @@ router.add('DELETE', '/api/projects/:id', async ({ request, env, user, params })
   const p = await env.DB.prepare('SELECT * FROM projects WHERE id = ?').bind(params.id).first();
   if (!p) throw new HttpError(404, 'Project not found');
   if (String(body.confirm || '').toLowerCase() !== p.slug.toLowerCase()) throw new HttpError(400, `Type the project link (${p.slug}) to confirm`);
+  const billed = await env.DB.prepare(`SELECT COUNT(*) AS n FROM invoices WHERE project_id = ? AND status <> 'draft'`).bind(p.id).first();
+  if (billed.n) throw new HttpError(409, 'This project has invoices that must be kept. Close the project instead.');
   const mine = '(SELECT id FROM assets WHERE project_id = ?)';
   await env.DB.batch([
+    env.DB.prepare(`DELETE FROM invoices WHERE project_id = ? AND status = 'draft'`).bind(p.id),
     env.DB.prepare('DELETE FROM issues WHERE project_id = ?').bind(p.id),
     env.DB.prepare(`DELETE FROM readings WHERE asset_id IN ${mine}`).bind(p.id),
     env.DB.prepare(`DELETE FROM tags WHERE asset_id IN ${mine}`).bind(p.id),
@@ -160,6 +192,8 @@ router.add('DELETE', '/api/projects/:id', async ({ request, env, user, params })
   ]);
   return json({ ok: true });
 });
+
+registerBilling(router, guard);
 
 // ---------------------------------------------------------------- auth
 

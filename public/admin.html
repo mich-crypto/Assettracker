@@ -31,6 +31,71 @@
       <div class="project-grid" id="project-list"></div>
     </section>
 
+    <section class="card" id="billing-card">
+      <div class="section-head"><h2>Billing</h2>
+        <div class="row"><button class="btn" type="button" id="bl-run">Create due invoices now</button><button class="btn btn-primary" type="button" id="bl-new">+ Manual invoice</button></div></div>
+      <p class="muted">Each project with billing switched on gets a startup fee on its first month and a monthly fee in advance. Invoices are created every day at 05:00 UTC when they are due; you choose whether they stay drafts or are issued and e-mailed automatically.</p>
+      <div class="tile-grid" id="bl-tiles"></div>
+      <div class="row" style="margin-bottom:10px">
+        <select id="bl-filter" aria-label="Show invoices">
+          <option value="">All invoices</option><option value="todo">Needs action</option><option value="draft">Drafts</option>
+          <option value="open">Unpaid</option><option value="overdue">Overdue</option><option value="paid">Paid</option><option value="void">Void</option>
+        </select>
+        <a class="btn" id="bl-csv" href="#">Export CSV</a>
+      </div>
+      <div class="table-wrap"><table><thead><tr><th>Invoice</th><th>Project</th><th>Date</th><th>Due</th><th class="num">Total</th><th>Status</th><th></th></tr></thead><tbody id="bl-rows"></tbody></table></div>
+      <p class="muted" id="bl-empty"></p>
+
+      <details id="bl-settings-box" style="margin-top:16px"><summary><b>Billing settings</b> <span class="muted" id="bl-settings-hint"></span></summary>
+        <form id="bl-settings" class="stack" autocomplete="off" style="margin-top:12px">
+          <div class="grid-2">
+            <div class="field"><label for="bs-name">Your company name <span class="req">*</span></label><input id="bs-name" type="text" maxlength="80"></div>
+            <div class="field"><label for="bs-vat">Your VAT number</label><input id="bs-vat" type="text" maxlength="80"></div>
+            <div class="field"><label for="bs-address">Your address <span class="req">*</span></label><textarea id="bs-address" rows="3" maxlength="600"></textarea></div>
+            <div class="field"><label for="bs-coc">Chamber of Commerce / registration no.</label><input id="bs-coc" type="text" maxlength="80"></div>
+            <div class="field"><label for="bs-iban">IBAN</label><input id="bs-iban" type="text" maxlength="80"></div>
+            <div class="field"><label for="bs-bic">BIC</label><input id="bs-bic" type="text" maxlength="80"></div>
+            <div class="field"><label for="bs-currency">Currency</label><input id="bs-currency" type="text" maxlength="3" style="max-width:100px"></div>
+            <div class="field"><label for="bs-vatpct">VAT (%)</label><input id="bs-vatpct" type="number" min="0" max="50" step="0.1" style="max-width:120px"></div>
+            <div class="field"><label for="bs-days">Payment term (days)</label><input id="bs-days" type="number" min="0" max="365" style="max-width:120px"></div>
+            <div class="field"><label for="bs-prefix">Invoice number prefix</label><input id="bs-prefix" type="text" maxlength="10" placeholder="optional, e.g. AT-" style="max-width:160px"><div class="muted">Numbers look like <span id="bs-prefix-ex" class="mono"></span></div></div>
+            <div class="field"><label for="bs-startup">Default startup fee</label><input id="bs-startup" type="text" inputmode="decimal" style="max-width:160px"><div class="muted">Filled in when you switch billing on for a project.</div></div>
+            <div class="field"><label for="bs-monthly">Default monthly fee</label><input id="bs-monthly" type="text" inputmode="decimal" style="max-width:160px"></div>
+          </div>
+          <div class="field"><label for="bs-footer">Text at the bottom of every invoice</label><textarea id="bs-footer" rows="2" maxlength="600" placeholder="e.g. Payment within 30 days to the IBAN above, quoting the invoice number."></textarea></div>
+          <div class="field"><label for="bs-auto">When an invoice is due</label>
+            <select id="bs-auto">
+              <option value="draft">Create a draft: I check it, then issue and send it</option>
+              <option value="issue">Issue it automatically (number assigned), I send it myself</option>
+              <option value="send">Issue and e-mail it to the project automatically</option>
+            </select></div>
+          <div class="grid-2">
+            <div class="field"><label for="bs-from">Send invoices from</label><input id="bs-from" type="text" inputmode="email" placeholder="billing@yourcompany.com" maxlength="120"></div>
+            <div class="field"><label for="bs-site">Site address</label><input id="bs-site" type="text" inputmode="url" placeholder="https://oam.eu" maxlength="120"><div class="muted">The invoice link in the e-mail uses this.</div></div>
+          </div>
+          <p class="muted" id="bs-mail-state"></p>
+          <div class="field-error" id="bs-error"></div>
+          <div class="row"><button class="btn btn-primary" type="submit">Save billing settings</button></div>
+        </form>
+      </details>
+    </section>
+
+    <dialog class="pair-dialog" id="inv-dialog" style="width:min(680px,calc(100% - 32px))">
+      <form id="inv-form" class="stack" autocomplete="off">
+        <h2 id="inv-title">Invoice</h2>
+        <div class="field" id="inv-project-row"><label for="inv-project">Project</label><select id="inv-project"></select></div>
+        <div id="inv-lines" class="stack"></div>
+        <button class="btn" type="button" id="inv-addline">+ Add line</button>
+        <div class="grid-2">
+          <div class="field"><label for="inv-ref">Customer reference / PO</label><input id="inv-ref" type="text" maxlength="80"></div>
+          <div class="field"><label for="inv-notes">Note on the invoice</label><input id="inv-notes" type="text" maxlength="600"></div>
+        </div>
+        <p class="muted" id="inv-sum"></p>
+        <div class="field-error" id="inv-error"></div>
+        <div class="row"><button class="btn btn-primary" type="submit">Save draft</button><button class="btn" type="button" id="inv-cancel">Cancel</button></div>
+      </form>
+    </dialog>
+
     <section class="card hidden" id="project-panel" aria-labelledby="pp-title">
       <div class="section-head"><h2 id="pp-title"></h2><button class="link-btn" type="button" id="pp-close">Close panel</button></div>
 
@@ -79,6 +144,27 @@
           <div class="row"><button class="btn btn-primary" type="submit">Save settings</button></div>
         </form>
       </div>
+
+      <form class="stack" id="pp-billing" autocomplete="off" style="margin-top:22px">
+        <h3>Billing for this project</h3>
+        <label class="check-inline"><input id="pb-enabled" type="checkbox"> Invoice this project</label>
+        <div class="grid-2">
+          <div class="field"><label for="pb-start">First billed month (start date)</label><input id="pb-start" type="date"><div class="muted">That whole month is billed, with the startup fee.</div></div>
+          <div class="field"><label for="pb-end">Stop after (optional)</label><input id="pb-end" type="date"></div>
+          <div class="field"><label for="pb-startup">Startup fee</label><input id="pb-startup" type="text" inputmode="decimal" placeholder="0.00"></div>
+          <div class="field"><label for="pb-monthly">Monthly fee</label><input id="pb-monthly" type="text" inputmode="decimal" placeholder="0.00"></div>
+          <div class="field"><label for="pb-company">Company to invoice</label><input id="pb-company" type="text" maxlength="120"></div>
+          <div class="field"><label for="pb-vatid">Their VAT number</label><input id="pb-vatid" type="text" maxlength="40"></div>
+          <div class="field"><label for="pb-address">Invoice address</label><textarea id="pb-address" rows="3" maxlength="400"></textarea></div>
+          <div class="field"><label for="pb-vatmode">VAT</label>
+            <select id="pb-vatmode"><option value="standard">Charge VAT</option><option value="reverse">Reverse charge (EU company with a VAT number)</option><option value="exempt">No VAT</option></select></div>
+          <div class="field"><label for="pb-email">Send invoices to</label><input id="pb-email" type="text" inputmode="email" maxlength="120" placeholder="defaults to the contact e-mail"></div>
+          <div class="field"><label for="pb-ref">Customer reference / PO</label><input id="pb-ref" type="text" maxlength="80"></div>
+        </div>
+        <p class="muted" id="pb-hint"></p>
+        <div class="field-error" id="pb-error"></div>
+        <div class="row"><button class="btn btn-primary" type="submit">Save billing</button><button class="btn" type="button" id="pb-invoices">Show this project's invoices</button></div>
+      </form>
 
       <h3 style="margin-top:22px">Vessels (SOV)</h3>
       <p class="muted">A vessel moves, so it has no fixed position.</p>
