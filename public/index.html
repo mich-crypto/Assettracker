@@ -5,106 +5,49 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>AssetTracker</title>
   <meta name="theme-color" content="#0b5cad">
-  <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/css/app.css">
 </head>
 <body>
   <main class="narrow">
-    <h1 style="margin-top:8vh">Asset<span style="color:var(--primary)">Tracker</span></h1>
-    <p class="muted">Generator &amp; equipment tracking by QR / NFC tag.</p>
+    <h1 style="margin-top:10vh">Asset<span style="color:var(--primary)">Tracker</span></h1>
+    <p class="muted">Equipment tracking for offshore wind projects.</p>
 
-    <form id="login" class="card hidden" autocomplete="on">
-      <h2>Sign in</h2>
-      <div class="field"><label for="username">Username</label><input id="username" name="username" type="text" autocomplete="username" autocapitalize="none" required></div>
-      <div class="field"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required></div>
-      <div class="field-error" id="login-error"></div>
-      <button class="btn btn-primary btn-big" type="submit">Sign in</button>
-    </form>
+    <div id="label-note" class="notice notice-warn hidden"></div>
 
-    <form id="setup" class="card hidden">
-      <h2>First-time setup</h2>
-      <p class="muted">Create the administrator account. You need the <code>SETUP_KEY</code> secret configured on the Worker.</p>
-      <div class="field"><label for="s-key">Setup key</label><input id="s-key" name="setupKey" type="password" required></div>
-      <div class="field"><label for="s-name">Your name</label><input id="s-name" name="name" type="text" required></div>
-      <div class="field"><label for="s-user">Username</label><input id="s-user" name="username" type="text" autocapitalize="none" required></div>
-      <div class="field"><label for="s-pass">Password (min. 8 characters)</label><input id="s-pass" name="password" type="password" minlength="8" autocomplete="new-password" required></div>
-      <div class="field-error" id="setup-error"></div>
-      <button class="btn btn-primary btn-big" type="submit">Create admin</button>
-    </form>
-
-    <form id="open" class="card hidden">
+    <form id="go" class="card">
+      <h2>Open your project</h2>
+      <p class="muted">Use the link or QR code you received from your project contact. Or enter the project code, for example <b>BLP</b>.</p>
       <div class="field">
-        <label for="o-name">Your name <span class="req">*</span></label>
-        <input id="o-name" name="name" type="text" autocomplete="name" required maxlength="100" placeholder="Saved with your readings">
-        <div class="field-error" id="open-error"></div>
+        <label for="code">Project code</label>
+        <input id="code" type="text" autocapitalize="characters" autocomplete="off" spellcheck="false" maxlength="24" required>
+        <div class="field-error" id="code-error"></div>
       </div>
-      <div class="stack">
-        <button class="btn btn-primary btn-big" type="submit" value="/field">Scan asset <span class="muted" style="color:inherit;font-weight:400">· technicians</span></button>
-        <button class="btn btn-big" type="submit" value="/add">Add equipment <span class="muted">· warehouse, step by step</span></button>
-        <button class="btn btn-big" type="submit" value="/link">Link tags <span class="muted">· edit, print labels</span></button>
-        <button class="btn btn-big" type="submit" value="/overview">Overview <span class="muted">· site manager</span></button>
-        <button class="btn btn-big" type="submit" value="/admin">Setup <span class="muted">· locations &amp; equipment types</span></button>
-      </div>
+      <button class="btn btn-primary btn-big" type="submit">Open</button>
     </form>
-
-    <div id="offline" class="notice notice-warn hidden">You are offline. Sign in once while connected; after that the Scan page works offline.</div>
   </main>
   <script type="module">
-    import { api, session, homeFor, registerServiceWorker } from '/js/app.js';
+    import { registerServiceWorker } from '/js/app.js';
+    import { SLUG_RE } from '/js/projects.js';
     registerServiceWorker();
-    const next = new URLSearchParams(location.search).get('next');
-    const go = (user) => location.replace(next && next.startsWith('/') && !next.startsWith('//') ? next : homeFor(user));
-
-    const openForm = document.getElementById('open');
-    function showOpen() {
-      openForm.name.value = session.user?.open ? session.user.name : '';
-      openForm.classList.remove('hidden');
+    const label = new URLSearchParams(location.search).get('label');
+    if (label) {
+      const n = document.getElementById('label-note');
+      n.textContent = `Label ${label} is not linked to any equipment yet. Open your project link, choose Warehouse → Add equipment, and scan the label there.`;
+      n.classList.remove('hidden');
     }
-    openForm.addEventListener('submit', (e) => {
+    document.getElementById('go').addEventListener('submit', async (e) => {
       e.preventDefault();
-      const name = openForm.name.value.trim();
-      if (!name) {
-        document.getElementById('open-error').textContent = 'Enter your name so readings show who recorded them.';
-        return openForm.name.focus();
-      }
-      session.setOpen(name);
-      location.href = next && next.startsWith('/') && !next.startsWith('//') ? next : e.submitter?.value || '/field';
+      const code = document.getElementById('code').value.trim();
+      const err = document.getElementById('code-error');
+      err.textContent = '';
+      if (!SLUG_RE.test(code)) { err.textContent = 'A project code is 2 to 24 letters, digits or hyphens.'; return; }
+      try {
+        const res = await fetch(`/api/p/${encodeURIComponent(code)}/info`);
+        if (!res.ok) { err.textContent = 'No project with this code. Check the link you received.'; return; }
+        location.href = `/${(await res.json()).project.slug}`;
+      } catch { err.textContent = 'No connection.'; }
     });
-
-    if (session.user?.open) {
-      // No-login mode: go straight on when sent here from a page, otherwise offer the screens.
-      if (next) go(session.user); else showOpen();
-    } else if (session.token && session.user) go(session.user);
-    else {
-      api('/api/auth/status').then(({ open, needsSetup }) => {
-        if (open) return showOpen();
-        document.getElementById(needsSetup ? 'setup' : 'login').classList.remove('hidden');
-      }).catch(() => {
-        document.getElementById('login').classList.remove('hidden');
-        document.getElementById('offline').classList.remove('hidden');
-      });
-    }
-
-    function bind(formId, path, errId) {
-      const form = document.getElementById(formId);
-      form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const btn = form.querySelector('button');
-        btn.disabled = true;
-        try {
-          const { token, user } = await api(path, { method: 'POST', body: Object.fromEntries(new FormData(form)) });
-          session.set(token, user);
-          go(user);
-        } catch (err) {
-          document.getElementById(errId).textContent = err.message;
-        } finally {
-          btn.disabled = false;
-        }
-      });
-    }
-    bind('login', '/api/auth/login', 'login-error');
-    bind('setup', '/api/auth/setup', 'setup-error');
   </script>
 </body>
 </html>

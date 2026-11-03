@@ -3,56 +3,135 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Setup · AssetTracker</title>
+  <title>Admin · AssetTracker</title>
   <meta name="theme-color" content="#0b5cad">
   <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="/css/app.css">
 </head>
 <body>
   <main>
-    <h1>Setup</h1>
+    <h1>Admin</h1>
+    <p class="muted">Create projects, hand out their links and QR codes, set up turbines and print labels. This page is not protected yet: anyone who knows its address can use it.</p>
 
-    <section class="card" id="locations-card">
-      <h2>Locations</h2>
-      <p class="muted">Turbines (WTG) need their surveyed position; the field app uses it to confirm where a technician is. The GPS radius is how close a phone must be to count as "at" the turbine. Vessels (SOV) need no position.</p>
-      <form id="loc-form" class="row" style="align-items:end">
-        <div class="field"><label for="l-kind">Kind</label><select id="l-kind" name="kind"><option>WTG</option><option>SOV</option></select></div>
-        <div class="field grow"><label for="l-name">Name</label><input id="l-name" name="name" type="text" required placeholder="e.g. WTG A01"></div>
-        <div class="field"><label for="l-lat">Latitude</label><input id="l-lat" name="lat" type="number" step="any" placeholder="54.0123"></div>
-        <div class="field"><label for="l-lon">Longitude</label><input id="l-lon" name="lon" type="number" step="any" placeholder="6.5432"></div>
-        <div class="field"><label for="l-rad">GPS radius (m)</label><input id="l-rad" name="radius_m" type="number" value="300" min="10"></div>
-        <div class="field"><button class="btn btn-primary" type="submit">Add</button></div>
+    <section class="card" id="projects-card">
+      <div class="section-head"><h2>Projects</h2><button class="btn btn-primary" type="button" id="btn-new-project">+ New project</button></div>
+      <form id="new-project" class="hidden stack" autocomplete="off">
+        <div class="grid-2">
+          <div class="field"><label for="np-name">Project name <span class="req">*</span></label><input id="np-name" type="text" required maxlength="80" placeholder="e.g. Baltic Power"></div>
+          <div class="field"><label for="np-slug">Link <span class="req">*</span></label>
+            <input id="np-slug" type="text" required maxlength="24" autocapitalize="characters" placeholder="e.g. BLP">
+            <div class="muted" id="np-preview">The project will be at /…</div></div>
+          <div class="field"><label for="np-client">Client</label><input id="np-client" type="text" maxlength="80" placeholder="e.g. Vestas"></div>
+          <div class="field"><label for="np-email">Contact e-mail</label><input id="np-email" type="text" inputmode="email" maxlength="120" placeholder="project@example.com"></div>
+        </div>
+        <div class="field-error" id="np-error"></div>
+        <div class="row"><button class="btn btn-primary" type="submit">Create project</button><button class="btn" type="button" id="np-cancel">Cancel</button></div>
       </form>
-      <details style="margin-bottom:12px">
-        <summary>Import from CSV (name, lat, lon[, kind, radius_m])</summary>
-        <p class="muted">One location per line. Existing names are updated. Example:<br><code>WTG A01,54.0123,6.5432</code></p>
-        <textarea id="csv" rows="6" placeholder="name,lat,lon"></textarea>
-        <div class="field-error" id="csv-error"></div>
-        <button class="btn" id="btn-import" type="button" style="margin-top:8px">Import</button>
+      <div class="project-grid" id="project-list"></div>
+    </section>
+
+    <section class="card hidden" id="project-panel" aria-labelledby="pp-title">
+      <div class="section-head"><h2 id="pp-title"></h2><button class="link-btn" type="button" id="pp-close">Close panel</button></div>
+
+      <div class="grid-2" style="align-items:start">
+        <div class="stack">
+          <h3>Link and onboarding</h3>
+          <div class="field">
+            <label for="site-base">Site address <span class="muted">(used in QR codes and labels)</span></label>
+            <input id="site-base" type="text" inputmode="url" autocomplete="off" spellcheck="false">
+            <div class="muted">Labels and QR codes contain this address for good. Use your final domain (for example https://oam.eu) before printing anything.</div>
+          </div>
+          <div class="link-box"><div id="pp-qr" class="qr-box" aria-hidden="true"></div>
+            <div><div class="mono" id="pp-link"></div>
+              <div class="row" style="margin-top:8px"><button class="btn" type="button" id="pp-copy">Copy link</button><a class="btn" id="pp-open" target="_blank" rel="noopener">Open</a></div></div></div>
+          <div class="row">
+            <button class="btn btn-primary" type="button" id="pp-print">Print onboarding sheet</button>
+            <button class="btn" type="button" id="pp-png">Download QR (PNG)</button>
+          </div>
+          <div class="row">
+            <a class="btn" id="pp-mail">E-mail to the project contact</a>
+            <button class="btn" type="button" id="pp-copy-mail">Copy e-mail text</button>
+          </div>
+          <p class="muted" id="pp-mail-hint"></p>
+        </div>
+
+        <form class="stack" id="pp-settings" autocomplete="off">
+          <h3>Settings</h3>
+          <div class="grid-2">
+            <div class="field"><label for="ps-name">Project name</label><input id="ps-name" type="text" required maxlength="80"></div>
+            <div class="field"><label for="ps-client">Client</label><input id="ps-client" type="text" maxlength="80"></div>
+          </div>
+          <div class="field"><label for="ps-email">Contact e-mail</label><input id="ps-email" type="text" inputmode="email" maxlength="120"></div>
+          <div class="field"><label for="ps-mode">Location check</label>
+            <select id="ps-mode">
+              <option value="test">Testing: the phone only suggests a location, and any position is accepted</option>
+              <option value="live">Live: outside the wind farm area the location must be chosen by hand</option>
+            </select></div>
+          <div class="grid-2">
+            <div class="field"><label for="ps-radius">GPS radius per turbine (m)</label><input id="ps-radius" type="number" min="10" max="10000" step="10">
+              <div class="muted">A phone this close to a turbine counts as "at" it.</div></div>
+            <div class="field"><label for="ps-farm">Wind farm area (km)</label><input id="ps-farm" type="number" min="1" max="100" step="1">
+              <div class="muted">Distance from the nearest turbine where the farm ends.</div></div>
+          </div>
+          <label class="check-inline"><input id="ps-nfc" type="checkbox"> Allow NFC tags (Android phones)</label>
+          <div class="field-error" id="ps-error"></div>
+          <div class="row"><button class="btn btn-primary" type="submit">Save settings</button></div>
+        </form>
+      </div>
+
+      <h3 style="margin-top:22px">Vessels (SOV)</h3>
+      <p class="muted">A vessel moves, so it has no fixed position.</p>
+      <div id="sov-list" class="chips-row"></div>
+      <form id="sov-form" class="row" autocomplete="off"><input id="sov-name" type="text" placeholder="Vessel name" maxlength="80" aria-label="Vessel name" style="max-width:260px" required><button class="btn" type="submit">Add vessel</button></form>
+
+      <h3 style="margin-top:22px">Turbines (WTG)</h3>
+      <p class="muted" id="wtg-summary"></p>
+      <div class="grid-2" style="align-items:start">
+        <div class="stack">
+          <div class="field"><label for="wtg-text">Paste the turbine list from Excel, or choose a file</label>
+            <textarea id="wtg-text" rows="7" class="mono" spellcheck="false" placeholder="Name, latitude, longitude&#10;WTG A01, 54.01230, 6.54320"></textarea>
+            <div class="muted">Decimal degrees (54.0123) or degrees and minutes (54°00.738'N) both work. Existing names are updated.</div></div>
+          <div class="row">
+            <input id="wtg-file" type="file" accept=".csv,.txt,.tsv,text/csv,text/plain" aria-label="Turbine list file">
+            <button class="btn" type="button" id="wtg-template">Download template</button>
+          </div>
+          <button class="btn btn-primary" type="button" id="wtg-check">Check the list</button>
+          <div id="wtg-result"></div>
+          <button class="btn btn-primary hidden" type="button" id="wtg-import">Import</button>
+        </div>
+        <div><div id="loc-map" role="region" aria-label="Preview of the turbine positions"></div></div>
+      </div>
+      <details style="margin-top:12px"><summary><b>Turbines in this project</b></summary>
+        <div class="table-wrap"><table><thead><tr><th>Name</th><th>Latitude</th><th>Longitude</th><th></th></tr></thead><tbody id="wtg-rows"></tbody></table></div>
       </details>
-      <div class="table-wrap"><table>
-        <thead><tr><th>Name</th><th>Kind</th><th>Position</th><th>Radius</th><th></th></tr></thead>
-        <tbody id="loc-rows"></tbody>
-      </table></div>
-    </section>
 
-    <section class="card hidden" id="users-card">
-      <h2>Users</h2>
-      <p class="muted"><b>Manager</b>: overview. <b>Supervisor</b>: link tags, scan, overview, locations. <b>Technician</b>: scan only. <b>Admin</b>: everything.</p>
-      <form id="user-form" class="row" style="align-items:end">
-        <div class="field grow"><label for="u-name">Name</label><input id="u-name" name="name" type="text" required></div>
-        <div class="field"><label for="u-user">Username</label><input id="u-user" name="username" type="text" autocapitalize="none" required></div>
-        <div class="field"><label for="u-role">Role</label><select id="u-role" name="role"><option>technician</option><option>supervisor</option><option>manager</option><option>admin</option></select></div>
-        <div class="field"><label for="u-pass">Password</label><input id="u-pass" name="password" type="password" minlength="8" autocomplete="new-password" required></div>
-        <div class="field"><button class="btn btn-primary" type="submit">Add user</button></div>
+      <h3 style="margin-top:22px">Close or delete</h3>
+      <div class="row">
+        <button class="btn" type="button" id="pp-status"></button>
+        <a class="btn" id="pp-export">Export all readings (CSV)</a>
+      </div>
+      <form id="pp-delete" class="row danger-zone" autocomplete="off">
+        <input id="pp-delete-confirm" type="text" autocomplete="off" spellcheck="false" aria-label="Type the project link to confirm" style="max-width:240px">
+        <button class="btn btn-danger" type="submit">Delete project and all its data</button>
       </form>
-      <div class="table-wrap"><table>
-        <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Status</th><th></th></tr></thead>
-        <tbody id="user-rows"></tbody>
-      </table></div>
+      <div class="muted">Closing makes the project read-only. Deleting removes its equipment, readings and turbines for good: type the project link to confirm.</div>
     </section>
 
-    <section class="card hidden" id="types-card">
+    <section class="card" id="labels-card">
+      <h2>QR labels to print</h2>
+      <p class="muted">Labels are generic: they hold only a random code, no serial number and no project. Print a batch on sticker sheets, send them to a project, and link each label to equipment by scanning it in the app.</p>
+      <div class="row" style="align-items:end">
+        <div class="field"><label for="lb-count">Number of labels</label><input id="lb-count" type="number" min="1" max="500" value="100" style="width:110px"></div>
+        <div class="field"><label for="lb-size">Label size</label>
+          <select id="lb-size"><option value="25">25 mm</option><option value="35" selected>35 mm</option><option value="50">50 mm</option></select></div>
+        <div class="field"><button class="btn btn-primary" type="button" id="lb-make">Create and print</button></div>
+      </div>
+      <p class="muted">Print at 100 % scale. Scan one printed label with a phone before you print the whole batch. A new batch has new codes.</p>
+      <div id="lb-sheet" class="label-sheet hidden"></div>
+    </section>
+
+    <section class="card" id="types-card">
       <h2>Equipment types</h2>
       <p class="muted">Choose what is recorded for each kind of equipment. No code or database change is needed to add new equipment or extra questions.</p>
       <div class="row" style="margin-bottom:14px">
@@ -92,6 +171,10 @@
       </div>
     </section>
   </main>
+
+  <div class="onboard" id="onboard-sheet"></div>
+  <script src="/vendor/leaflet/leaflet.js"></script>
+  <script src="/vendor/qrcode.js"></script>
   <script type="module" src="/js/admin.js"></script>
 </body>
 </html>

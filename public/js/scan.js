@@ -13,16 +13,19 @@ export function newTagCode() {
   return 'AT-' + Array.from(bytes, (b) => ALPHABET[b % 32]).join('');
 }
 
-export function tagUrl(code) {
-  return `${location.origin}/field#t=${encodeURIComponent(code)}`;
+/** What a label encodes: a short address that opens the project the equipment belongs to. */
+export function tagUrl(code, base = location.origin) {
+  return `${base.replace(/\/+$/, '')}/t/${encodeURIComponent(code)}`;
 }
 
-/** Extracts a tag code from scanned text: our URL, or a bare code / serial. */
+/** Extracts a tag code from scanned text: our /t/CODE address, an older #t= link, or a bare code / serial. */
 export function parseTagText(text) {
   const raw = String(text || '').trim();
   if (!raw) return null;
   try {
     const u = new URL(raw);
+    const m = u.pathname.match(/^\/t\/([^/]+)/);
+    if (m) return decodeURIComponent(m[1]).trim();
     const fromHash = new URLSearchParams(u.hash.slice(1)).get('t');
     const fromQuery = u.searchParams.get('t');
     if (fromHash || fromQuery) return (fromHash || fromQuery).trim();

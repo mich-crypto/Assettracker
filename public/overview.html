@@ -60,6 +60,22 @@
 
     <div class="card"><div id="map" role="region" aria-label="Map of equipment on turbines"></div></div>
 
+    <details class="card report" id="svc-card">
+      <summary><b>Service report</b> <span class="muted" id="svc-count"></span> <span class="muted">· lifting points inspections and alarms</span></summary>
+      <div class="row report-tools"><button class="btn" type="button" id="svc-copy">Copy as text</button><button class="btn" type="button" id="svc-csv">Download CSV</button><button class="btn" type="button" id="svc-print">Print</button></div>
+      <div class="table-wrap"><table class="unit-table"><thead><tr><th>Location</th><th>Equipment</th><th>Needs</th><th>Last serviced</th></tr></thead><tbody id="svc-rows"></tbody></table></div>
+    </details>
+
+    <details class="card report" id="fuel-card">
+      <summary><b>Refuel planning</b> <span class="muted" id="fuel-count"></span> <span class="muted">· where to bring fuel</span></summary>
+      <div class="row report-tools">
+        <label for="fuel-max">Fuel level at or below</label>
+        <select id="fuel-max"><option value="25">25 %</option><option value="50" selected>50 %</option><option value="75">75 %</option></select>
+        <button class="btn" type="button" id="fuel-copy">Copy as text</button><button class="btn" type="button" id="fuel-print">Print</button>
+      </div>
+      <div class="table-wrap"><table class="unit-table"><thead><tr><th>Turbine</th><th>Equipment</th><th>Fuel</th><th>Last check</th></tr></thead><tbody id="fuel-rows"></tbody></table></div>
+    </details>
+
     <section id="elsewhere-section" class="hidden">
       <h2 style="margin-top:20px">Elsewhere</h2>
       <p class="muted" style="margin-top:-6px">Scanned away from the wind farm (on shore, in transit), at the phone's GPS position.</p>

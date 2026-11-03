@@ -1,6 +1,7 @@
 import { router } from './api.js';
 import { verifySession } from './auth.js';
 import { HttpError, json } from './http.js';
+import { RESERVED_SLUGS, SLUG_RE } from '../public/js/projects.js';
 
 const SECURITY_HEADERS = {
   'x-content-type-options': 'nosniff',
@@ -8,9 +9,9 @@ const SECURITY_HEADERS = {
   'x-frame-options': 'DENY',
 };
 
-// AUTH_MODE=open: no logins, every request acts as an admin. Readings then
-// carry the name typed on the phone (recorded_by) instead of a user account.
-const OPEN_USER = { id: null, username: 'open', name: 'Open access', role: 'admin', open: true };
+// AUTH_MODE=open: no logins, every request acts as an admin. Readings carry no
+// personal name. (AUTH_MODE=login keeps the account system for later use.)
+const OPEN_USER = { id: null, username: 'open', name: null, role: 'admin', open: true };
 
 const isOpenMode = (env) => env.AUTH_MODE === 'open';
 
@@ -48,12 +49,64 @@ async function handleApi(request, env, ctx) {
   }
 }
 
+const notFoundPage = (env, request) =>
+  env.ASSETS.fetch(new Request(new URL('/404.html', request.url), request)).then((r) => new Response(r.body, { ...r, status: 404 }));
+
+/** A label scanned with the phone's normal camera: /t/<code> opens the project that owns it. */
+async function labelRedirect(request, env, code) {
+  const row = await env.DB.prepare(
+    `SELECT p.slug FROM tags t JOIN assets a ON a.id = t.asset_id JOIN projects p ON p.id = a.project_id WHERE t.code = ?`,
+  ).bind(code).first();
+  const url = new URL(request.url);
+  const target = row
+    ? `/${row.slug}/field#t=${encodeURIComponent(code)}`
+    : `/?label=${encodeURIComponent(code)}`;
+  return Response.redirect(new URL(target, url).toString(), 302);
+}
+
+const PROJECT_PAGES = { '/': '/project', '/field': '/field', '/add': '/add', '/warehouse': '/warehouse', '/overview': '/overview' };
+
+async function handleProjectPath(request, env, slug, rest) {
+  const project = await env.DB.prepare('SELECT slug, name, status FROM projects WHERE slug = ?').bind(slug).first();
+  if (!project) return notFoundPage(env, request);
+  if (rest === '/manifest.webmanifest') {
+    return json({
+      name: project.name,
+      short_name: project.slug,
+      description: `Equipment tracking for ${project.name}`,
+      start_url: `/${project.slug}/field`,
+      scope: `/${project.slug}/`,
+      display: 'standalone',
+      background_color: '#f3f5f7',
+      theme_color: '#0b5cad',
+      icons: [
+        { src: '/icons/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
+        { src: '/icons/icon-maskable.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'maskable' },
+      ],
+    }, 200, { 'content-type': 'application/manifest+json', 'cache-control': 'no-cache' });
+  }
+  const page = PROJECT_PAGES[rest.replace(/\/+$/, '') || '/'];
+  if (!page) return notFoundPage(env, request);
+  return env.ASSETS.fetch(new Request(new URL(page, request.url), request));
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    const response = url.pathname.startsWith('/api/')
-      ? await handleApi(request, env, ctx)
-      : await env.ASSETS.fetch(request);
+    const path = url.pathname;
+    let response;
+    if (path.startsWith('/api/')) {
+      response = await handleApi(request, env, ctx);
+    } else if (path.startsWith('/t/') && path.length > 3) {
+      response = await labelRedirect(request, env, decodeURIComponent(path.slice(3)));
+    } else {
+      const m = path.match(/^\/([^/]+)(\/.*)?$/);
+      if (m && SLUG_RE.test(m[1]) && !RESERVED_SLUGS.has(m[1].toLowerCase())) {
+        response = await handleProjectPath(request, env, m[1], m[2] || '/');
+      } else {
+        response = await env.ASSETS.fetch(request);
+      }
+    }
     const out = new Response(response.body, response);
     for (const [k, v] of Object.entries(SECURITY_HEADERS)) out.headers.set(k, v);
     return out;

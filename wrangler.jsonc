@@ -5,19 +5,17 @@
   "compatibility_date": "2026-09-01",
   "observability": { "enabled": true },
   "vars": {
-    // "open": no logins, anyone with the URL can use every screen.
-    // Set to "login" to require accounts (then SESSION_SECRET and SETUP_KEY are needed).
-    "AUTH_MODE": "open",
-    // "on": the phone suggests the WTG / SOV from GPS (any location can still be picked,
-    // and away from the wind farm the phone's own position is used).
-    // "off": no GPS suggestion at all, the location is always picked by hand.
-    "GEO_CHECK": "on"
+    // "open": no logins. Access is by project link (for example /BLP); put the site
+    // behind Cloudflare Access when real access control is needed.
+    "AUTH_MODE": "open"
   },
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
     "not_found_handling": "404-page",
-    "run_worker_first": ["/api/*"]
+    // The Worker handles the API, label redirects (/t/CODE) and project links (/BLP,
+    // /BLP/field ...). Static files are served straight from the asset store.
+    "run_worker_first": ["/*", "!/js/*", "!/css/*", "!/vendor/*", "!/icons/*", "!/sw.js"]
   },
   "d1_databases": [
     {

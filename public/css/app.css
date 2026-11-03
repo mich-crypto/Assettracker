@@ -222,8 +222,6 @@ tbody tr.clickable:hover { background: var(--surface-2); }
 .label-sheet { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 12px; }
 .label-blank { grid-template-columns: 1fr; justify-items: center; text-align: center; gap: 4px; }
 @media print {
-  #blank-card > :not(.label-sheet) { display: none; }
-  .label-sheet { grid-template-columns: repeat(4, 1fr); }
   body * { visibility: hidden; }
   .print-area, .print-area * { visibility: visible; }
   .print-area { position: absolute; left: 0; top: 0; }
@@ -322,3 +320,79 @@ tbody tr.clickable:hover { background: var(--surface-2); }
 .pair-box { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 14px; display: flex; justify-content: space-between; gap: 10px; align-items: center; }
 .pair-box.ok { border-color: var(--ok); background: var(--ok-bg); }
 .pair-dialog .stack > * { width: 100%; }
+
+/* ---------- project home */
+.center { text-align: center; }
+.home-head { margin: 6vh 0 18px; }
+.project-title { margin: 2px 0 0; font-size: 1.15rem; font-weight: 600; color: var(--muted); }
+.home-q { margin: 18px 0 10px; font-size: 1.05rem; }
+.role-grid { display: grid; gap: 12px; margin-bottom: 14px; }
+.role { display: grid; grid-template-columns: auto 1fr; gap: 2px 14px; align-items: center; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; text-decoration: none; color: var(--text); box-shadow: var(--shadow); min-height: 84px; }
+.role:hover { border-color: var(--primary); }
+.role b { font-size: 1.15rem; }
+.role span:not(.role-ico) { grid-column: 2; color: var(--muted); font-size: .9rem; }
+.role-ico { grid-row: 1 / span 2; font-size: 1.8rem; color: var(--primary); width: 44px; text-align: center; }
+.steps { padding-left: 1.2em; margin: 8px 0 14px; display: grid; gap: 6px; }
+.project-name { color: var(--muted); font-weight: 400; font-size: .9rem; margin-left: 4px; }
+.nav-badge { background: var(--danger); color: #fff; border-radius: 999px; font-size: .72rem; font-weight: 700; padding: 1px 6px; margin-left: 5px; }
+
+/* ---------- admin: projects */
+.project-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; margin-top: 12px; }
+.project-card { display: grid; gap: 2px; text-align: left; font: inherit; color: inherit; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; cursor: pointer; }
+.project-card:hover, .project-card.selected { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary) inset; }
+.project-card b { font-size: 1.05rem; }
+.project-card .badge { justify-self: start; margin-top: 4px; }
+.link-box { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.qr-box { width: 150px; height: 150px; background: #fff; padding: 6px; border-radius: 8px; border: 1px solid var(--border); flex: none; }
+.qr-box svg { width: 100%; height: 100%; display: block; }
+.chips-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.danger-zone { margin: 8px 0; }
+.btn-disabled { opacity: .5; pointer-events: none; }
+#loc-map { height: 320px; border-radius: var(--radius); border: 1px solid var(--border); z-index: 0; }
+.label-sheet.hidden { display: none; }
+.label-sheet { display: grid; grid-template-columns: repeat(auto-fill, var(--label-mm, 35mm)); gap: 4mm; margin-top: 14px; justify-content: start; }
+.label-sticker { width: var(--label-mm, 35mm); text-align: center; background: #fff; color: #000; padding: 1mm; break-inside: avoid; border: 1px dashed var(--border); }
+.label-sticker svg { width: 100%; height: auto; display: block; }
+.label-sticker .l-code { font: 600 7pt ui-monospace, monospace; letter-spacing: .02em; }
+.onboard { display: none; background: #fff; color: #111; }
+.onboard-page { max-width: 190mm; margin: 0 auto; padding: 10mm; text-align: center; }
+.onboard-brand { font-size: 14pt; letter-spacing: .02em; }
+.onboard-brand b { color: #0b5cad; }
+.onboard h1 { font-size: 26pt; margin: 6mm 0 2mm; }
+.onboard-lead { font-size: 13pt; margin: 0 0 6mm; }
+.onboard-qr { width: 70mm; margin: 0 auto; }
+.onboard-qr svg { width: 100%; height: auto; display: block; }
+.onboard-url { font: 600 14pt ui-monospace, monospace; margin: 4mm 0 8mm; }
+.onboard-cols { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6mm; text-align: left; font-size: 10pt; }
+.onboard-cols h2 { font-size: 11pt; margin: 0 0 2mm; }
+.onboard-cols p { margin: 0 0 1.5mm; }
+.onboard-contact { margin-top: 8mm; font-size: 10pt; }
+@media print {
+  .label-sheet { grid-template-columns: repeat(auto-fill, var(--label-mm, 35mm)); gap: 3mm; margin: 0; }
+  .label-sticker { border: 0; outline: 0; }
+  .onboard.print-area { display: block; position: absolute; left: 0; top: 0; width: 100%; }
+}
+
+/* ---------- reports */
+.report summary { cursor: pointer; }
+.report-tools { margin: 10px 0; align-items: center; }
+.kpi-link { text-decoration: none; color: inherit; display: block; }
+.kpi-link:hover { border-color: var(--primary); }
+@media print { .report:not(.print-area) { display: none; } details.print-area { display: block; } }
+
+/* ---------- warehouse */
+main.narrow-wide { max-width: 760px; margin: 0 auto; padding: 16px; }
+.tile-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.tile { display: grid; gap: 4px; align-content: start; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; text-decoration: none; color: var(--text); box-shadow: var(--shadow); min-height: 96px; }
+.tile:hover { border-color: var(--primary); }
+.tile b { font-size: 1.1rem; }
+.tile span { color: var(--muted); font-size: .9rem; }
+.tile-primary { background: var(--primary); border-color: var(--primary); color: var(--primary-ink); }
+.tile-primary span { color: inherit; opacity: .85; }
+.back-link { text-decoration: none; }
+.issue { border: 1px solid var(--border); border-left: 4px solid var(--danger); border-radius: var(--radius); background: var(--surface); padding: 12px 14px; }
+.issue h3 { margin: 0 0 4px; font-size: 1rem; }
+.issue .row { margin-top: 8px; }
+.due-row { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-top: 1px solid var(--border); }
+.due-row:first-child { border-top: 0; }
+.quick-dates .btn { min-height: 40px; }

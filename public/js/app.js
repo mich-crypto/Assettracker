@@ -1,37 +1,12 @@
-// Shared browser helpers: session, API calls, navigation, offline sync.
+// Shared browser helpers: project from the address, API calls, navigation,
+// offline data and sync. Every page lives under a project link (/BLP/field).
+import { slugFromPath } from './projects.js';
 import { cache, outbox } from './store.js';
 
-const TOKEN_KEY = 'at.token';
-const USER_KEY = 'at.user';
-
-export const session = {
-  get token() { return localStorage.getItem(TOKEN_KEY); },
-  get user() {
-    try { return JSON.parse(localStorage.getItem(USER_KEY)); } catch { return null; }
-  },
-  set(token, user) {
-    localStorage.setItem(TOKEN_KEY, token);
-    localStorage.setItem(USER_KEY, JSON.stringify(user));
-  },
-  /** No-login mode: a placeholder token plus the name typed on this device. */
-  setOpen(name) {
-    this.set('open', { id: null, name, role: 'admin', open: true });
-  },
-  clear() {
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(USER_KEY);
-  },
-};
-
-const PERMS = {
-  manager: ['overview', 'field'],
-  supervisor: ['overview', 'link', 'field', 'locations'],
-  technician: ['field'],
-};
-export function can(permission, user = session.user) {
-  if (!user) return false;
-  return user.role === 'admin' || (PERMS[user.role] || []).includes(permission);
-}
+export const SLUG = slugFromPath(location.pathname);
+export const BASE = SLUG ? `/${SLUG}` : '';
+/** Address of a page in this project: path('field') -> /BLP/field; path() -> /BLP */
+export const path = (page = '') => `${BASE}${page ? `/${page}` : ''}`;
 
 export class ApiError extends Error {
   constructor(status, message, details) {
@@ -41,79 +16,79 @@ export class ApiError extends Error {
   }
 }
 
-export async function api(path, { method = 'GET', body } = {}) {
+const GLOBAL_API = ['/api/projects', '/api/types', '/api/auth', '/api/users', '/api/p/'];
+
+/** Calls the API. Project data lives under /api/p/<slug>; admin routes are global. */
+export async function api(apiPath, { method = 'GET', body } = {}) {
+  let target = apiPath;
+  if (!GLOBAL_API.some((g) => apiPath.startsWith(g))) {
+    if (!SLUG) throw new ApiError(0, 'Open the app through your project link');
+    target = `/api/p/${SLUG}${apiPath.slice('/api'.length)}`;
+  }
   const headers = {};
-  if (session.token) headers.authorization = `Bearer ${session.token}`;
   if (body !== undefined) headers['content-type'] = 'application/json';
   let res;
   try {
-    res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    res = await fetch(target, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   } catch {
     throw new ApiError(0, 'No connection');
   }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    if (res.status === 401 && path !== '/api/auth/login') window.dispatchEvent(new Event('at:unauthorized'));
-    throw new ApiError(res.status, data.error || `Request failed (${res.status})`, data.details);
-  }
+  if (!res.ok) throw new ApiError(res.status, data.error || `Request failed (${res.status})`, data.details);
   return data;
 }
 
-/** Redirects to the login page unless signed in with the given permission. */
-export function requireLogin(permission) {
-  const user = session.user;
-  if (!user || !session.token) {
-    location.replace(`/?next=${encodeURIComponent(location.pathname + location.hash)}`);
-    return null;
-  }
-  if (permission && !can(permission, user)) {
+/** Pages of a project need the project link in the address; anything else goes to the start page. */
+export function requireProject() {
+  if (!SLUG) {
     location.replace('/');
     return null;
   }
-  return user;
+  return { open: true };
 }
 
-export function homeFor(user) {
-  if (can('overview', user) && user.role !== 'supervisor') return '/overview';
-  if (can('link', user)) return '/link';
-  return '/field';
-}
-
-// [permission, href, label, page id]
 const NAV = [
-  ['overview', '/overview', 'Overview', 'overview'],
-  ['link', '/add', 'Add', 'add'],
-  ['link', '/link', 'Link tags', 'link'],
-  ['field', '/field', 'Scan', 'field'],
-  ['locations', '/admin', 'Setup', 'locations'],
+  ['overview', 'Overview'],
+  ['warehouse', 'Warehouse'],
+  ['field', 'Scan'],
 ];
 
-/** Renders the top bar with role-appropriate navigation and the sync indicator. */
-export function renderHeader(active) {
-  const user = session.user;
+/** Top bar with navigation, the project name and the sync indicator. */
+export async function renderHeader(active) {
   const header = document.createElement('header');
   header.className = 'topbar';
   header.innerHTML = `
-    <a class="brand" href="/">Asset<b>Tracker</b></a>
-    <nav>${NAV.filter(([p]) => can(p)).map(([, href, label, id]) =>
-      `<a href="${href}"${id === active ? ' aria-current="page"' : ''}>${label}</a>`).join('')}</nav>
-    <div class="topbar-right">
-      <button type="button" class="sync-pill" id="sync-pill" title="Sync now"></button>
-      <span class="who">${esc(user?.name || '')}</span>
-      ${user?.open
-        ? '<a class="link-btn" href="/">Change name</a>'
-        : '<button type="button" class="link-btn" id="logout">Sign out</button>'}
-    </div>`;
+    <a class="brand" href="${path()}" id="brand">Asset<b>Tracker</b> <span class="project-name">${esc(SLUG)}</span></a>
+    <nav>${NAV.map(([id, label]) =>
+      `<a href="${path(id)}"${id === active ? ' aria-current="page"' : ''} data-nav="${id}">${label}</a>`).join('')}</nav>
+    <div class="topbar-right"><button type="button" class="sync-pill" id="sync-pill" title="Sync now"></button></div>`;
   document.body.prepend(header);
-  header.querySelector('#logout')?.addEventListener('click', async () => {
-    const pending = await outbox.count().catch(() => 0);
-    if (pending && !confirm(`${pending} reading(s) have not been synced yet and will stay on this phone. Sign out anyway?`)) return;
-    session.clear();
-    location.href = '/';
-  });
   header.querySelector('#sync-pill').onclick = () => syncNow({ manual: true });
   updateSyncPill();
+  injectManifest();
+  // Show the project's real name and the number of things waiting for the supervisor.
+  cache.get(`bootstrap:${SLUG}`).then((b) => {
+    if (!b) return;
+    header.querySelector('.project-name').textContent = b.project?.name || SLUG;
+    setIssueBadge(b.openIssues);
+  }).catch(() => {});
   return header;
+}
+
+export function setIssueBadge(n) {
+  const a = document.querySelector('[data-nav="warehouse"]');
+  if (!a) return;
+  a.querySelector('.nav-badge')?.remove();
+  if (n > 0) a.insertAdjacentHTML('beforeend', `<span class="nav-badge" aria-label="${n} to investigate">${n}</span>`);
+}
+
+/** A per-project manifest, so "add to home screen" opens this project's Scan page. */
+function injectManifest() {
+  if (!SLUG || document.querySelector('link[rel=manifest]')) return;
+  const link = document.createElement('link');
+  link.rel = 'manifest';
+  link.href = `${BASE}/manifest.webmanifest`;
+  document.head.append(link);
 }
 
 export function esc(s) {
@@ -137,8 +112,19 @@ export function toast(message, kind = 'info') {
 
 export function fmtTime(iso) {
   if (!iso) return '—';
-  const d = new Date(iso);
-  return d.toLocaleString(undefined, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+  return new Date(iso).toLocaleString(undefined, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+export function fmtDate(d) {
+  if (!d) return '—';
+  return new Date(`${String(d).slice(0, 10)}T00:00:00`).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+/** Whole days from today until a YYYY-MM-DD date (negative when it has passed). */
+export function daysUntil(d, now = new Date()) {
+  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  const [y, m, day] = String(d).slice(0, 10).split('-').map(Number);
+  return Math.round((Date.UTC(y, m - 1, day) - today) / 86400e3);
 }
 
 export function ago(iso) {
@@ -152,35 +138,29 @@ export function ago(iso) {
 
 // ---------------------------------------------------------------- offline data + sync
 
-/** Refreshes the offline snapshot from the server; falls back to the cached copy. */
+/** Refreshes this project's offline snapshot from the server; falls back to the cached copy. */
 export async function loadReference({ refresh = true } = {}) {
+  const key = `bootstrap:${SLUG}`;
   if (refresh && navigator.onLine !== false) {
     try {
       const data = await api('/api/bootstrap');
-      await cache.set('bootstrap', data);
+      await cache.set(key, data);
+      setIssueBadge(data.openIssues);
       return { ...data, fromCache: false };
     } catch (e) {
-      if (e.status === 401) throw e;
+      if (e.status === 404 || e.status === 403) throw e;
     }
   }
-  const cached = await cache.get('bootstrap');
+  const cached = await cache.get(key);
   if (!cached) throw new ApiError(0, 'No connection and no offline data yet. Open the app once while online.');
   return { ...cached, fromCache: true };
 }
 
-export function deviceId() {
-  let id = localStorage.getItem('at.device');
-  if (!id) {
-    id = crypto.randomUUID();
-    localStorage.setItem('at.device', id);
-  }
-  return id;
-}
-
 let syncing = null;
+const LOCAL_ONLY = ['label', 'rejected', 'error', 'project'];
 
 /**
- * Uploads the outbox. Stored and duplicate readings are removed locally;
+ * Uploads the outbox. Stored and duplicate items are removed locally;
  * rejected ones stay, marked with the server's reason, so nothing is lost silently.
  */
 export function syncNow({ manual = false } = {}) {
@@ -190,29 +170,36 @@ export function syncNow({ manual = false } = {}) {
       if (manual) toast('Nothing to sync');
       return;
     }
-    if (!session.token) return;
     setPill('syncing');
     let stored = 0;
     let rejected = 0;
     try {
-      for (let i = 0; i < items.length; i += 200) {
-        const chunk = items.slice(i, i + 200);
-        const { results } = await api('/api/readings/sync', {
-          method: 'POST',
-          body: { readings: chunk.map(({ rejected: _r, error: _e, label: _l, ...r }) => r) },
-        });
-        const done = results.filter((r) => r.status !== 'rejected').map((r) => r.id);
-        await outbox.remove(done);
-        stored += done.length;
-        for (const r of results.filter((x) => x.status === 'rejected')) {
-          const item = chunk.find((c) => c.id === r.id);
-          if (item) { await outbox.put({ ...item, rejected: true, error: r.error }); rejected++; }
+      const byProject = new Map();
+      for (const i of items) {
+        const slug = i.project || SLUG;
+        if (!byProject.has(slug)) byProject.set(slug, []);
+        byProject.get(slug).push(i);
+      }
+      for (const [slug, list] of byProject) {
+        for (let n = 0; n < list.length; n += 200) {
+          const chunk = list.slice(n, n + 200);
+          const { results } = await api(`/api/p/${slug}/readings/sync`, {
+            method: 'POST',
+            body: { readings: chunk.map((r) => Object.fromEntries(Object.entries(r).filter(([k]) => !LOCAL_ONLY.includes(k)))) },
+          });
+          const done = results.filter((r) => r.status !== 'rejected').map((r) => r.id);
+          await outbox.remove(done);
+          stored += done.length;
+          for (const r of results.filter((x) => x.status === 'rejected')) {
+            const item = chunk.find((c) => c.id === r.id);
+            if (item) { await outbox.put({ ...item, rejected: true, error: r.error }); rejected++; }
+          }
         }
       }
-      if (stored) toast(`Synced ${stored} reading${stored === 1 ? '' : 's'}`, 'ok');
-      if (rejected) toast(`${rejected} reading(s) were rejected - see the Scan page`, 'error');
+      if (stored) toast(`Synced ${stored} item${stored === 1 ? '' : 's'}`, 'ok');
+      if (rejected) toast(`${rejected} item(s) were rejected - see the Scan page`, 'error');
     } catch (e) {
-      if (manual) toast(e.status === 0 ? 'Offline - readings stay queued on this phone' : e.message, 'error');
+      if (manual) toast(e.status === 0 ? 'Offline - everything stays queued on this phone' : e.message, 'error');
     }
   })().finally(() => {
     syncing = null;
@@ -248,19 +235,17 @@ export function startAutoSync() {
   kick();
 }
 
-window.addEventListener('at:unauthorized', () => {
-  // Keep the outbox; it is synced after the next sign-in.
-  toast('Your session has expired. Sign in again to sync.', 'error');
-  session.clear();
-  setTimeout(() => location.replace(`/?next=${encodeURIComponent(location.pathname)}`), 1500);
-});
-
 export function registerServiceWorker() {
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/sw.js').then((reg) => {
+    navigator.serviceWorker.register('/sw.js').then(() => {
       // Ask for a wake-up when connectivity returns, where Background Sync exists (Android Chrome).
       navigator.serviceWorker.ready.then((r) => r.sync?.register('outbox').catch(() => {}));
-      return reg;
     }).catch(() => {});
   }
+}
+
+/** Fetches the project's pages once so the service worker can serve them offline. */
+export function warmPages() {
+  if (!SLUG || navigator.onLine === false) return;
+  for (const page of ['', 'field', 'add', 'warehouse', 'overview']) fetch(path(page)).catch(() => {});
 }

@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Warehouse · AssetTracker</title>
+  <meta name="theme-color" content="#0b5cad">
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icons/icon.svg">
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <main class="narrow-wide">
+    <!-- hub -->
+    <section id="view-home">
+      <h1>Warehouse</h1>
+      <nav class="tile-grid" aria-label="Warehouse actions">
+        <a class="tile tile-primary" id="t-add" href="#"><b>Add equipment</b><span>New generator or fuel cube, step by step</span></a>
+        <a class="tile" href="#refuel"><b>Refuelled</b><span>Scan and confirm a fuel cube or generator is full</span></a>
+        <a class="tile" href="#service"><b>Serviced</b><span>Lifting points inspected: set the next date</span></a>
+        <a class="tile" href="#issues"><b>To investigate</b><span id="issue-count">Things technicians reported</span></a>
+        <a class="tile" href="#list"><b>Equipment list</b><span>Find, edit, retire, attach a label</span></a>
+        <a class="tile" href="#import"><b>Import from Excel</b><span>Register the existing fleet in one go</span></a>
+      </nav>
+      <section class="card" id="due-card">
+        <div class="section-head"><h2>Needs service</h2><a class="btn" id="due-more" href="#">Full report</a></div>
+        <div id="due-list"></div>
+      </section>
+    </section>
+
+    <!-- refuelled / serviced -->
+    <section class="hidden" id="view-action">
+      <p><a href="#" class="back-link">← Warehouse</a></p>
+      <h1 id="act-title"></h1>
+      <div class="card stack" id="act-pick">
+        <button class="btn btn-primary btn-big" type="button" id="act-scan">Scan QR code</button>
+        <div class="field"><label for="act-serial">…or choose by serial number</label>
+          <input id="act-serial" list="act-serials" type="text" autocapitalize="characters" autocomplete="off" placeholder="Type a serial number"><datalist id="act-serials"></datalist></div>
+        <div class="field-error" id="act-error"></div>
+      </div>
+      <form class="card stack hidden" id="act-confirm" autocomplete="off">
+        <div><h2 id="act-kind" style="margin:0"></h2><div class="muted" id="act-sub"></div></div>
+        <div id="act-service" class="hidden">
+          <div class="field"><label for="act-date">Next lifting points inspection due <span class="req">*</span></label>
+            <input id="act-date" type="date" required>
+            <div class="row quick-dates" style="margin-top:8px"><button type="button" class="btn" data-months="6">In 6 months</button><button type="button" class="btn" data-months="12">In 12 months</button></div></div>
+        </div>
+        <button class="btn btn-primary btn-big" type="submit" id="act-save"></button>
+        <button class="btn" type="button" id="act-cancel">Cancel</button>
+      </form>
+    </section>
+
+    <!-- equipment list -->
+    <section class="hidden" id="view-list">
+      <p><a href="#" class="back-link">← Warehouse</a></p>
+      <h1>Equipment</h1>
+      <input id="list-q" type="search" placeholder="Search serial, equipment, location or label" aria-label="Search equipment">
+      <div class="card" style="margin-top:12px"><div class="table-wrap"><table class="unit-table">
+        <thead><tr><th>Equipment</th><th>Serial</th><th>Location</th><th>Label</th></tr></thead><tbody id="list-rows"></tbody></table></div></div>
+    </section>
+
+    <!-- to investigate -->
+    <section class="hidden" id="view-issues">
+      <p><a href="#" class="back-link">← Warehouse</a></p>
+      <h1>To investigate</h1>
+      <p class="muted">Technicians raise these from the Scan app when something does not add up. Check on site or ask the crew, then mark it as resolved.</p>
+      <div id="issue-list" class="stack"></div>
+    </section>
+
+    <!-- import -->
+    <section class="hidden" id="view-import">
+      <p><a href="#" class="back-link">← Warehouse</a></p>
+      <h1>Import from Excel</h1>
+      <div class="card stack">
+        <ol class="steps">
+          <li>Download the template and fill in one row per generator or fuel cube.</li>
+          <li>Save it as CSV (in Excel: File → Save as → CSV), then choose the file here.</li>
+          <li>Check the list, then import. Labels are attached later by scanning them.</li>
+        </ol>
+        <div class="row"><button class="btn" type="button" id="imp-template">Download template</button><input id="imp-file" type="file" accept=".csv,.txt,text/csv,text/plain" aria-label="Filled-in list"></div>
+        <div class="field"><label for="imp-text">…or paste the rows here</label><textarea id="imp-text" rows="6" class="mono" spellcheck="false"></textarea></div>
+        <button class="btn btn-primary" type="button" id="imp-check">Check the list</button>
+        <div id="imp-result"></div>
+        <button class="btn btn-primary hidden" type="button" id="imp-go"></button>
+      </div>
+    </section>
+  </main>
+
+  <aside class="drawer hidden" id="drawer" aria-labelledby="ed-title"></aside>
+  <script src="/vendor/jsQR.js" defer></script>
+  <script type="module" src="/js/warehouse.js"></script>
+</body>
+</html>

@@ -1,31 +1,41 @@
 // Site manager overview: a searchable list of the equipment on the vessel, then
 // the turbines with their equipment, fuel level and a warning symbol. The manager
 // can also put a unit at a location by hand (serial number -> location).
-import { ago, api, esc, fmtTime, registerServiceWorker, renderHeader, requireLogin, session, toast } from './app.js';
-import { evaluateAlerts, fixedAt, formatValue } from './fields.js';
+import { ago, api, esc, fmtDate, fmtTime, path, registerServiceWorker, renderHeader, requireProject, toast } from './app.js';
+import { alertsFor, kindOf as kindOfType, levelField as levelOfType, typeById } from './equipment.js';
+import { formatValue } from './fields.js';
+import { downloadBlob, printOnly } from './print.js';
+import { fuelRows, rowsToCsv, rowsToText, serviceRows } from './reports.js';
 
-const user = requireLogin('overview');
+const ok = requireProject();
 const $ = (id) => document.getElementById(id);
-const STALE_DAYS = 7;
 
 let types = [];
+let openIssues = 0;
 let locations = [];
 let assets = [];
 let map;
 let markerLayer;
 let fitted = false;
 
-if (user) init();
+if (ok) init();
 
 async function init() {
   renderHeader('overview');
   registerServiceWorker();
   initMap();
+  $('fuel-max').onchange = render;
+  $('svc-copy').onclick = () => copyReport('service');
+  $('svc-csv').onclick = () => csvReport('service');
+  $('svc-print').onclick = () => printOnly($('svc-card'));
+  $('fuel-copy').onclick = () => copyReport('fuel');
+  $('fuel-print').onclick = () => printOnly($('fuel-card'));
   ['q-sov', 'q-wtg', 'f-alert'].forEach((id) => $(id).addEventListener('input', render));
   $('assign-form').onsubmit = onAssign;
   $('as-serial').oninput = assignHint;
   $('btn-csv').onclick = exportCsv;
   await load();
+  if (location.hash === '#service') { $('svc-card').open = true; $('svc-card').scrollIntoView(); }
   setInterval(load, 60_000);
 }
 
@@ -34,6 +44,7 @@ async function load() {
     const [boot, list] = await Promise.all([api('/api/bootstrap'), api('/api/assets')]);
     types = boot.types;
     locations = boot.locations;
+    openIssues = boot.openIssues;
     assets = list.assets.map(enrich);
     fillAssignLists();
     $('updated').textContent = `Updated ${new Date().toLocaleTimeString()}`;
@@ -43,24 +54,16 @@ async function load() {
   }
 }
 
-function typeOf(a) {
-  return types.find((t) => t.id === a.type_id) || { name: a.type_id, fields: [] };
-}
+const typeOf = (a) => typeById(types, a.type_id);
 
 // `last` = where the unit is now (scan or manual move); `check` = its latest scan values.
 function enrich(a) {
   const type = typeOf(a);
-  const alerts = a.check ? evaluateAlerts(type.fields, a.check.data) : [];
-  const stale = !!a.last && (!a.check || Date.now() - new Date(a.check.recorded_at) > STALE_DAYS * 86400e3);
-  return { ...a, type, alerts, stale };
+  return { ...a, type, alerts: alertsFor(a, type) };
 }
 
 /** What a site manager calls a unit: its type plus its fixed choices, e.g. "Generator 350 kVA". */
-function kindOf(a) {
-  const extras = a.type.fields.filter((f) => f.scope === 'asset' && f.type === 'select' && a.attributes[f.key])
-    .map((f) => a.attributes[f.key]);
-  return [a.type.name, ...extras].join(' ');
-}
+const kindOf = (a) => kindOfType(a, a.type);
 
 const norm = (v) => String(v || '').toLowerCase().replace(/\s+/g, '');
 
@@ -84,7 +87,7 @@ function render() {
     kpi(onSov.length, 'on the vessel') +
     kpi(onWtg.length, `on ${new Set(onWtg.map((a) => a.last.location_id)).size} turbines`) +
     kpi(`<span class="warn-sym">⚠</span> ${assets.filter((a) => a.alerts.length).length}`, 'with a warning') +
-    kpi(assets.filter((a) => a.stale).length, `not checked in ${STALE_DAYS} days`);
+    `<a class="kpi kpi-link" href="${path('warehouse')}"><b>${openIssues}</b><span>to investigate</span></a>`;
 
   // Vessel: one searchable list (vessel name shown when there is more than one SOV).
   const sovCount = locations.filter((l) => l.kind === 'SOV' && l.active).length;
@@ -128,15 +131,53 @@ function render() {
   $('unplaced-list').innerHTML = summaryChips(unplaced) +
     '<p class="muted">Use <b>Assign a location</b> above to place them.</p>';
 
+  renderReports();
   document.querySelectorAll('[data-id]').forEach((el) => (el.onclick = () => openAsset(el.dataset.id)));
   renderMap(wtgGroups, elsewhere);
 }
 
-/** The level shown in the Fuel column: the fuel field, else the first percentage field. */
-function levelField(a) {
-  const nums = a.type.fields.filter((f) => f.scope === 'check' && f.type === 'number');
-  return nums.find((f) => /fuel/i.test(f.key)) || nums.find((f) => f.unit === '%') || null;
+// ---------------------------------------------------------------- reports
+
+const SVC_HEAD = ['Location', 'Equipment', 'Serial', 'Needs', 'Last serviced'];
+const FUEL_HEAD = ['Turbine', 'Equipment', 'Serial', 'Fuel level', 'Last check'];
+let svc = [];
+let fuel = [];
+
+function renderReports() {
+  svc = serviceRows(assets, types);
+  $('svc-count').textContent = svc.length ? `(${svc.length})` : '';
+  $('svc-rows').innerHTML = svc.map((r) => `<tr class="clickable" data-id="${esc(r.id)}">
+      <td>${esc(r.location)}</td><td><b>${esc(r.kind)}</b><div class="muted">${esc(r.serial)}</div></td>
+      <td>${r.reasons.map((x) => `<div><span class="warn-sym" aria-hidden="true">⚠</span> ${esc(x)}</div>`).join('')}</td>
+      <td>${r.servicedAt ? esc(fmtDate(r.servicedAt)) : '<span class="muted">—</span>'}</td></tr>`).join('')
+    || '<tr><td colspan="4" class="muted">Nothing needs service right now.</td></tr>';
+
+  fuel = fuelRows(assets, types, Number($('fuel-max').value));
+  $('fuel-count').textContent = fuel.length ? `(${fuel.length})` : '';
+  $('fuel-rows').innerHTML = fuel.map((r) => `<tr class="clickable" data-id="${esc(r.id)}">
+      <td><b>${esc(r.location)}</b></td><td>${esc(r.kind)}<div class="muted">${esc(r.serial)}</div></td>
+      <td>${r.level}${esc(r.unit)}</td><td>${esc(ago(r.at))}</td></tr>`).join('')
+    || '<tr><td colspan="4" class="muted">No equipment on turbines at or below this level.</td></tr>';
 }
+
+const reportLines = (which) => (which === 'service'
+  ? svc.map((r) => [r.location, r.kind, r.serial, r.reasons.join('; '), r.servicedAt ? fmtDate(r.servicedAt) : ''])
+  : fuel.map((r) => [r.location, r.kind, r.serial, `${r.level}${r.unit}`, ago(r.at)]));
+
+async function copyReport(which) {
+  const title = which === 'service' ? 'Equipment that needs service' : `Fuel visit list (${$('fuel-max').value}% or lower)`;
+  try {
+    await navigator.clipboard.writeText(rowsToText(title, which === 'service' ? SVC_HEAD : FUEL_HEAD, reportLines(which)));
+    toast('Report copied as text', 'ok');
+  } catch { toast('Copy is not allowed here', 'error'); }
+}
+
+function csvReport(which) {
+  downloadBlob(new Blob([rowsToCsv(which === 'service' ? SVC_HEAD : FUEL_HEAD, reportLines(which))], { type: 'text/csv' }), `service-report-${new Date().toISOString().slice(0, 10)}.csv`);
+}
+
+/** The level shown in the Fuel column: the fuel field, else the first percentage field. */
+const levelField = (a) => levelOfType(a.type);
 
 function fuelCell(a) {
   const f = levelField(a);
@@ -154,8 +195,7 @@ function warnCell(a) {
 }
 
 function checkedCell(a) {
-  if (!a.check) return '<span class="muted">not scanned</span>';
-  return `<span class="${a.stale ? 'stale' : ''}">${esc(ago(a.check.recorded_at))}</span>`;
+  return a.check ? esc(ago(a.check.recorded_at)) : '<span class="muted">not scanned</span>';
 }
 
 function movedTag(a) {
@@ -164,7 +204,7 @@ function movedTag(a) {
   const together = partner && partner.last?.linked_asset_id === a.id && partner.last?.location_id === a.last.location_id;
   const link = together ? `<div class="muted moved-tag">⛓ with ${esc(kindOf(partner))}</div>` : '';
   const moved = a.last?.kind === 'move' && !a.last.linked_asset_id
-    ? `<div class="muted moved-tag">placed by hand${a.last.user_name ? ` (${esc(a.last.user_name)})` : ''}</div>` : '';
+    ? '<div class="muted moved-tag">placed by hand</div>' : '';
   return link + moved;
 }
 
@@ -178,7 +218,7 @@ function elsewhereCard(units) {
       return `<button type="button" class="unit" data-id="${a.id}">
         <div class="unit-kind">${esc(kindOf(a))} ${warnCell(a)}</div>
         <div class="unit-vals">At ${pos} · ${fuelCell(a)}</div>
-        <div class="unit-vals">Checked ${a.check ? esc(ago(a.check.recorded_at)) : '—'}${a.last.user_name ? ` by ${esc(a.last.user_name)}` : ''}</div>
+        <div class="unit-vals">Checked ${a.check ? esc(ago(a.check.recorded_at)) : '—'}</div>
       </button>`;
     }).join('')}
   </section>`;
@@ -236,7 +276,7 @@ async function onAssign(e) {
 async function moveAsset(a, locId) {
   const loc = locations.find((l) => l.id === locId);
   try {
-    await api(`/api/assets/${a.id}/move`, { method: 'POST', body: { location_id: locId, recorded_by: session.user?.name } });
+    await api(`/api/assets/${a.id}/move`, { method: 'POST', body: { location_id: locId } });
     toast(`${kindOf(a)} (${a.serial}) placed at ${loc?.name}`, 'ok');
     await load();
     return true;
@@ -310,7 +350,7 @@ async function openAsset(id) {
     const { asset, readings } = await api(`/api/assets/${id}`);
     const type = typeOf(asset);
     const checks = type.fields.filter((f) => f.scope === 'check');
-    const lastCheck = readings.find((r) => r.kind !== 'move');
+    const lastCheck = readings.find((r) => r.kind === 'check');
     drawer.innerHTML = `
       <div class="row" style="justify-content:space-between">
         <h2 id="d-title" style="margin:0">${esc(kindOf({ ...asset, type }))}</h2>
@@ -322,17 +362,19 @@ async function openAsset(id) {
         <button class="btn" type="submit">Assign</button>
       </form>
       <dl class="kv">${type.fields.filter((f) => f.scope === 'asset').map((f) =>
-        `<dt>${esc(f.label)}</dt><dd>${esc(formatValue(f, asset.attributes[f.key]))}</dd>`).join('')}</dl>
+        `<dt>${esc(f.label)}</dt><dd>${esc(f.type === 'date' ? fmtDate(asset.attributes[f.key]) : formatValue(f, asset.attributes[f.key]))}</dd>`).join('')}</dl>
       <p class="muted" style="font-size:.85rem">Serial ${esc(asset.serial)}${asset.name ? ` · ${esc(asset.name)}` : ''}</p>
       <h3 style="margin-top:16px">History (${readings.length})</h3>
       <div class="table-wrap"><table>
-        <thead><tr><th>When</th><th>Location</th>${checks.map((f) => `<th>${esc(f.label)}</th>`).join('')}<th>By</th></tr></thead>
-        <tbody>${readings.map((r) => `<tr>
+        <thead><tr><th>When</th><th>Location</th>${checks.map((f) => `<th>${esc(f.label)}</th>`).join('')}<th>Notes</th></tr></thead>
+        <tbody>${readings.map((r) => (r.kind === 'event' ? `<tr>
+          <td>${esc(fmtTime(r.recorded_at))}</td>
+          <td colspan="${checks.length + 2}"><span class="badge badge-ok">${r.data.event === 'refuel' ? 'Refuelled' : 'Serviced'}</span>${r.data.next_inspection ? ` next inspection ${esc(fmtDate(r.data.next_inspection))}` : ''}</td></tr>` : `<tr>
           <td>${esc(fmtTime(r.recorded_at))}</td>
           <td>${r.location_name ? esc(r.location_name) : r.lat != null ? `Elsewhere (${r.lat.toFixed(4)}, ${r.lon.toFixed(4)})` : '?'} ${r.kind === 'move' ? '<span class="badge">placed by hand</span>' : sourceBadge(r)}${r.distance_m != null ? `<div class="muted">${Math.round(r.distance_m)} m from WTG</div>` : ''}</td>
           ${checks.map((f) => `<td>${esc(formatValue(f, r.data[f.key]))}</td>`).join('')}
-          <td>${esc(r.user_name || '')}${r.notes ? `<div class="muted">${esc(r.notes)}</div>` : ''}</td>
-        </tr>`).join('') || `<tr><td colspan="${checks.length + 3}" class="muted">No readings yet.</td></tr>`}</tbody>
+          <td>${r.notes ? `<div class="muted">${esc(r.notes)}</div>` : ''}</td>
+        </tr>`)).join('') || `<tr><td colspan="${checks.length + 3}" class="muted">No readings yet.</td></tr>`}</tbody>
       </table></div>`;
     $('d-close').onclick = () => drawer.classList.add('hidden');
     $('d-move').onsubmit = async (e) => {
@@ -354,14 +396,14 @@ async function exportCsv() {
   try {
     const { readings } = await api('/api/readings?limit=5000');
     const keys = [...new Set(types.flatMap((t) => t.fields.filter((f) => f.scope === 'check').map((f) => f.key)))];
-    const head = ['recorded_at', 'kind', 'serial', 'type', 'location', 'location_kind', 'location_source', 'gps_status', 'lat', 'lon', 'accuracy_m', 'distance_m', ...keys, 'notes', 'user'];
+    const head = ['recorded_at', 'kind', 'serial', 'type', 'location', 'location_kind', 'location_source', 'gps_status', 'lat', 'lon', 'accuracy_m', 'distance_m', ...keys, 'notes'];
     const cell = (v) => {
       const s = Array.isArray(v) ? v.join('; ') : v == null ? '' : String(v);
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
     const lines = [head.join(',')].concat(readings.map((r) => [
       r.recorded_at, r.kind, r.serial, r.type_id, r.location_name, r.location_kind, r.location_source, r.gps_status,
-      r.lat, r.lon, r.accuracy_m, r.distance_m, ...keys.map((k) => r.data[k]), r.notes, r.user_name,
+      r.lat, r.lon, r.accuracy_m, r.distance_m, ...keys.map((k) => r.data[k]), r.notes,
     ].map(cell).join(',')));
     const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
     const a = document.createElement('a');

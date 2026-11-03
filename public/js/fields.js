@@ -12,6 +12,8 @@
 //          and this value is recorded (e.g. fuel cube: never connected on the SOV)
 //   pairWith: yes/no fields only; the id of an equipment type to scan and link
 //          when the answer is Yes (e.g. generator "Fuel cube connected" -> fuel cube)
+//   dueWarnDays: date fields only; the equipment gets a warning when this date is that many
+//          days away or already past (e.g. the next lifting points inspection)
 //   alert: { below: n } | { atMost: n } | { above: n } | { equals: value } | { any: true }
 
 export const FIELD_TYPES = ['number', 'text', 'boolean', 'select', 'multiselect', 'date'];
@@ -43,6 +45,9 @@ export function validateFieldDefs(defs) {
     }
     if ('pairWith' in f && (f.type !== 'boolean' || f.scope !== 'check' || typeof f.pairWith !== 'string' || !f.pairWith)) {
       errors.push(`${where}: linking to other equipment is only possible for yes/no questions asked on every scan`);
+    }
+    if (f.dueWarnDays != null && (f.type !== 'date' || !(f.dueWarnDays >= 0))) {
+      errors.push(`${where}: a due-date warning is only possible for date fields`);
     }
     for (const k of ['min', 'max']) {
       if (f[k] != null && typeof f[k] !== 'number') errors.push(`${where}: ${k} must be a number`);
@@ -148,5 +153,27 @@ export function fixedAt(defs, locationKind) {
 export function applyLocationRules(defs, values, locationKind) {
   const out = { ...values };
   for (const f of fixedAt(defs, locationKind)) out[f.key] = f.sovValue;
+  return out;
+}
+
+/**
+ * Warnings for due dates in an asset's fixed details (e.g. lifting points inspection).
+ * `today` is a Date; returns [{ key, label, date, days, text }] with days < 0 when overdue.
+ */
+export function evaluateDueAlerts(defs, attributes, today = new Date()) {
+  const out = [];
+  const t0 = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+  for (const f of defs) {
+    if (f.type !== 'date' || f.dueWarnDays == null) continue;
+    const v = attributes?.[f.key];
+    if (!v) continue;
+    const [y, m, d] = String(v).slice(0, 10).split('-').map(Number);
+    const days = Math.round((Date.UTC(y, m - 1, d) - t0) / 86400e3);
+    const base = f.label.replace(/\s+due$/i, ''); // "Lifting points inspection due" -> "... inspection due in 10 d"
+    if (days <= f.dueWarnDays) {
+      out.push({ key: f.key, label: f.label, date: String(v).slice(0, 10), days,
+        text: days < 0 ? `${base} overdue (${-days} d)` : days === 0 ? `${base} due today` : `${base} due in ${days} d` });
+    }
+  }
   return out;
 }

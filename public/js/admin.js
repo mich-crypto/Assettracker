@@ -1,389 +1,349 @@
-// Setup: locations (supervisor + admin), users and equipment types (admin).
-import { api, esc, registerServiceWorker, renderHeader, requireLogin, toast } from './app.js';
-import { validateFieldDefs } from './fields.js';
-import { renderFields } from './forms.js';
+// Admin: projects (create, settings, onboarding, turbines, close, delete), generic
+// QR labels, and the equipment types shared by all projects.
+import { api, esc, toast } from './app.js';
+import { parseLocationRows } from './coords.js';
+import { downloadBlob, printOnly, qrPng, qrSvg } from './print.js';
+import { newTagCode, tagUrl } from './scan.js';
+import { initTypesEditor } from './types-editor.js';
+import { validSlug } from './projects.js';
 
-const user = requireLogin('locations');
 const $ = (id) => document.getElementById(id);
-const isAdmin = user?.role === 'admin';
-const openMode = !!user?.open; // no logins: user accounts are not used
+const BASE_KEY = 'at.siteBase';
 
-let types = [];
+let projects = [];
+let current = null;        // selected project
+let locations = [];        // its locations
+let parsed = null;         // result of "Check the list"
+let map = null;
+let mapLayer = null;
 
-if (user) init();
+init();
 
 async function init() {
-  renderHeader('locations');
-  registerServiceWorker();
-  $('loc-form').onsubmit = onAddLocation;
-  $('btn-import').onclick = onImport;
+  $('btn-new-project').onclick = () => { $('new-project').classList.toggle('hidden'); $('np-name').focus(); };
+  $('np-cancel').onclick = () => $('new-project').classList.add('hidden');
+  $('new-project').onsubmit = onCreate;
+  $('np-slug').oninput = () => { $('np-preview').textContent = `The project will be at ${siteBase()}/${$('np-slug').value.trim() || '…'}`; };
+  $('np-name').oninput = () => {
+    // Suggest initials as the link until the user types their own.
+    if ($('np-slug').dataset.touched) return;
+    const initials = $('np-name').value.trim().split(/\s+/).map((w) => w[0] || '').join('').toUpperCase().slice(0, 6);
+    $('np-slug').value = initials;
+    $('np-slug').dispatchEvent(new Event('input'));
+  };
+  $('np-slug').addEventListener('keydown', () => { $('np-slug').dataset.touched = '1'; });
+  $('pp-close').onclick = () => { current = null; $('project-panel').classList.add('hidden'); renderProjects(); };
+  $('site-base').value = siteBase();
+  $('site-base').onchange = () => {
+    try { localStorage.setItem(BASE_KEY, $('site-base').value.trim().replace(/\/+$/, '')); } catch { /* ignore */ }
+    if (current) renderLink();
+  };
+  $('pp-copy').onclick = () => copy(projectUrl(), 'Link copied');
+  $('pp-copy-mail').onclick = () => copy(mailText().body, 'E-mail text copied');
+  $('pp-print').onclick = printOnboarding;
+  $('pp-png').onclick = async () => downloadBlob(await qrPng(projectUrl()), `${current.slug}-qr.png`);
+  $('pp-settings').onsubmit = onSaveSettings;
+  $('pp-status').onclick = onToggleStatus;
+  $('pp-delete').onsubmit = onDelete;
+  $('sov-form').onsubmit = onAddSov;
+  $('wtg-check').onclick = onCheckList;
+  $('wtg-import').onclick = onImport;
+  $('wtg-file').onchange = onFile;
+  $('wtg-template').onclick = () => downloadBlob(new Blob(['name,latitude,longitude\nWTG A01,54.01230,6.54320\nWTG A02,54.01230,6.55820\n'], { type: 'text/csv' }), 'turbine-list-template.csv');
+  $('lb-make').onclick = makeLabels;
+  await loadProjects();
+  initTypesEditor().catch((e) => toast(e.message, 'error'));
+}
+
+function siteBase() {
+  let saved = null;
+  try { saved = localStorage.getItem(BASE_KEY); } catch { /* ignore */ }
+  return (saved || location.origin).replace(/\/+$/, '');
+}
+
+const projectUrl = () => `${siteBase()}/${current.slug}`;
+
+async function copy(text, message) {
+  try { await navigator.clipboard.writeText(text); toast(message, 'ok'); } catch { toast('Copy is not allowed here; select the text instead', 'error'); }
+}
+
+// ---------------------------------------------------------------- projects
+
+async function loadProjects() {
+  ({ projects } = await api('/api/projects'));
+  renderProjects();
+}
+
+function renderProjects() {
+  $('project-list').innerHTML = projects.map((p) => `
+    <button type="button" class="project-card${current?.id === p.id ? ' selected' : ''}" data-id="${esc(p.id)}">
+      <b>${esc(p.name)}</b>
+      <span class="mono">/${esc(p.slug)}</span>
+      <span class="muted">${p.client ? `${esc(p.client)} · ` : ''}${p.wtgs} turbines · ${p.assets} equipment${p.open_issues ? ` · <span class="warn-sym">⚠</span> ${p.open_issues} to investigate` : ''}</span>
+      <span class="badge ${p.status === 'active' ? 'badge-ok' : ''}">${p.status === 'active' ? (p.geo_mode === 'live' ? 'live' : 'testing') : 'closed'}</span>
+    </button>`).join('') || '<p class="muted">No projects yet. Create the first one.</p>';
+  $('project-list').querySelectorAll('.project-card').forEach((b) => (b.onclick = () => selectProject(b.dataset.id)));
+}
+
+async function onCreate(e) {
+  e.preventDefault();
+  $('np-error').textContent = '';
+  const slug = $('np-slug').value.trim();
+  if (!validSlug(slug)) { $('np-error').textContent = 'The link must be 2 to 24 letters, digits or hyphens (for example BLP) and not a reserved word.'; return; }
+  try {
+    const { project } = await api('/api/projects', { method: 'POST', body: {
+      name: $('np-name').value, slug, client: $('np-client').value, contact_email: $('np-email').value,
+    } });
+    e.target.reset();
+    delete $('np-slug').dataset.touched;
+    $('new-project').classList.add('hidden');
+    toast(`Project ${project.name} created`, 'ok');
+    await loadProjects();
+    selectProject(project.id);
+  } catch (err) { $('np-error').textContent = err.message; }
+}
+
+async function selectProject(id) {
+  current = projects.find((p) => p.id === id);
+  if (!current) return;
+  renderProjects();
+  $('project-panel').classList.remove('hidden');
+  $('pp-title').textContent = `${current.name}  ·  /${current.slug}`;
+  $('ps-name').value = current.name;
+  $('ps-client').value = current.client || '';
+  $('ps-email').value = current.contact_email || '';
+  $('ps-mode').value = current.geo_mode;
+  $('ps-radius').value = current.gps_radius_m;
+  $('ps-farm').value = current.farm_radius_km;
+  $('ps-nfc').checked = !!current.nfc_enabled;
+  $('ps-error').textContent = '';
+  $('pp-status').textContent = current.status === 'active' ? 'Close project (read-only)' : 'Reopen project';
+  $('pp-export').href = '#';
+  $('pp-export').onclick = (e) => { e.preventDefault(); exportCsv(); };
+  $('pp-delete-confirm').value = '';
+  $('pp-delete-confirm').placeholder = `Type ${current.slug} to delete`;
+  parsed = null;
+  $('wtg-result').innerHTML = '';
+  $('wtg-import').classList.add('hidden');
+  $('wtg-text').value = '';
+  renderLink();
   await loadLocations();
-  if (isAdmin) {
-    $('types-card').classList.remove('hidden');
-    $('t-select').onchange = showType;
-    $('t-new').onclick = newType;
-    $('t-save').onclick = saveType;
-    await loadTypes();
-    if (!openMode) {
-      $('users-card').classList.remove('hidden');
-      $('user-form').onsubmit = onAddUser;
-      await loadUsers();
-    }
-  }
+  $('project-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function onSaveSettings(e) {
+  e.preventDefault();
+  $('ps-error').textContent = '';
+  try {
+    const { project } = await api(`/api/projects/${current.id}`, { method: 'PATCH', body: {
+      name: $('ps-name').value, client: $('ps-client').value, contact_email: $('ps-email').value,
+      geo_mode: $('ps-mode').value, gps_radius_m: $('ps-radius').value, farm_radius_km: $('ps-farm').value, nfc_enabled: $('ps-nfc').checked,
+    } });
+    toast('Settings saved', 'ok');
+    await loadProjects();
+    current = projects.find((p) => p.id === project.id);
+    $('pp-title').textContent = `${current.name}  ·  /${current.slug}`;
+    renderLink();
+  } catch (err) { $('ps-error').textContent = err.message; }
+}
+
+async function onToggleStatus() {
+  const next = current.status === 'active' ? 'closed' : 'active';
+  if (next === 'closed' && !confirm(`Close ${current.name}? Nobody can add or change anything until you reopen it.`)) return;
+  try {
+    await api(`/api/projects/${current.id}`, { method: 'PATCH', body: { status: next } });
+    toast(next === 'closed' ? 'Project closed' : 'Project reopened', 'ok');
+    await loadProjects();
+    selectProject(current.id);
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function onDelete(e) {
+  e.preventDefault();
+  try {
+    await api(`/api/projects/${current.id}`, { method: 'DELETE', body: { confirm: $('pp-delete-confirm').value } });
+    toast(`Project ${current.name} deleted`, 'ok');
+    current = null;
+    $('project-panel').classList.add('hidden');
+    await loadProjects();
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function exportCsv() {
+  try {
+    const { readings } = await api(`/api/p/${current.slug}/readings?limit=5000`);
+    const keys = [...new Set(readings.flatMap((r) => Object.keys(r.data || {})))];
+    const cell = (v) => {
+      const s = Array.isArray(v) ? v.join('; ') : v == null ? '' : String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const head = ['recorded_at', 'kind', 'serial', 'type', 'location', 'location_source', 'gps_status', 'lat', 'lon', ...keys, 'notes'];
+    const lines = [head.join(',')].concat(readings.map((r) => [
+      r.recorded_at, r.kind, r.serial, r.type_id, r.location_name, r.location_source, r.gps_status, r.lat, r.lon, ...keys.map((k) => r.data[k]), r.notes,
+    ].map(cell).join(',')));
+    downloadBlob(new Blob([lines.join('\n')], { type: 'text/csv' }), `${current.slug}-readings.csv`);
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+// ---------------------------------------------------------------- link, QR, onboarding
+
+function renderLink() {
+  const url = projectUrl();
+  $('pp-link').textContent = url;
+  $('pp-open').href = url;
+  $('pp-qr').innerHTML = qrSvg(url);
+  const m = mailText();
+  $('pp-mail').href = current.contact_email ? `mailto:${encodeURIComponent(current.contact_email)}?subject=${encodeURIComponent(m.subject)}&body=${encodeURIComponent(m.body)}` : '#';
+  $('pp-mail').classList.toggle('btn-disabled', !current.contact_email);
+  $('pp-mail-hint').textContent = current.contact_email
+    ? 'Opens your e-mail program with the text filled in. Attach the QR (PNG) or the printed onboarding sheet yourself.'
+    : 'Add a contact e-mail in the settings to prepare the e-mail.';
+}
+
+function mailText() {
+  const name = current.name;
+  const url = projectUrl();
+  return {
+    subject: `AssetTracker for ${name}: how to get access`,
+    body: `Hello,
+
+Here is the link to the equipment tracking app for ${name}:
+${url}
+
+How to get started
+1. Open the link on your phone (or laptop). You can also scan the QR code in the attachment.
+2. The first time, the app shows how to put it on your home screen. Do this once; after that it opens like any other app and also works without signal on the turbines.
+3. Choose what you do: Scan equipment (technicians), Warehouse, or Overview (site manager).
+
+Technicians: scan the QR label on the generator, confirm where you are, answer the few questions and save. Readings you take offline are sent automatically when you are back on the vessel network.
+
+Kind regards`,
+  };
+}
+
+function printOnboarding() {
+  const url = projectUrl();
+  $('onboard-sheet').innerHTML = `
+    <div class="onboard-page">
+      <div class="onboard-brand">Asset<b>Tracker</b></div>
+      <h1>${esc(current.name)}</h1>
+      <p class="onboard-lead">Scan the QR code with your phone camera, or open the link.</p>
+      <div class="onboard-qr">${qrSvg(url)}</div>
+      <p class="onboard-url">${esc(url)}</p>
+      <div class="onboard-cols">
+        <div><h2>1. Put it on your home screen</h2>
+          <p><b>iPhone (Safari):</b> Share → Add to Home Screen.</p>
+          <p><b>Android (Chrome):</b> ⋮ menu → Install app.</p>
+          <p><b>Laptop (Chrome / Edge):</b> install icon in the address bar.</p></div>
+        <div><h2>2. Choose what you do</h2>
+          <p><b>Scan equipment</b> for technicians.</p>
+          <p><b>Warehouse</b> to add equipment, mark refuelled or serviced.</p>
+          <p><b>Overview</b> for the site manager.</p></div>
+        <div><h2>3. Offshore</h2>
+          <p>The app works without signal. Anything you record is sent automatically when you are back on the vessel network.</p></div>
+      </div>
+      ${current.contact_email ? `<p class="onboard-contact">Questions: ${esc(current.contact_email)}</p>` : ''}
+    </div>`;
+  printOnly($('onboard-sheet'));
 }
 
 // ---------------------------------------------------------------- locations
 
 async function loadLocations() {
-  const { locations } = await api('/api/locations');
-  $('loc-rows').innerHTML = locations.map((l) => `<tr>
-    <td><b>${esc(l.name)}</b></td>
-    <td><span class="badge">${l.kind}</span></td>
-    <td class="mono">${l.lat != null ? `${l.lat.toFixed(5)}, ${l.lon.toFixed(5)}` : '—'}</td>
-    <td>${l.kind === 'WTG' ? `${l.radius_m} m` : ''}</td>
-    <td>${l.active ? '' : '<span class="badge">inactive</span>'}
-      <button class="link-btn" data-loc="${l.id}" data-active="${l.active}">${l.active ? 'Deactivate' : 'Activate'}</button></td>
-  </tr>`).join('') || '<tr><td colspan="5" class="muted">No locations yet.</td></tr>';
-  $('loc-rows').querySelectorAll('[data-loc]').forEach((b) => {
-    b.onclick = async () => {
-      try {
-        await api(`/api/locations/${b.dataset.loc}`, { method: 'PATCH', body: { active: b.dataset.active !== '1' } });
-        loadLocations();
-      } catch (e) { toast(e.message, 'error'); }
-    };
-  });
+  ({ locations } = await api(`/api/p/${current.slug}/locations`));
+  const sovs = locations.filter((l) => l.kind === 'SOV');
+  const wtgs = locations.filter((l) => l.kind === 'WTG');
+  $('sov-list').innerHTML = sovs.map((l) => `<span class="chip">${esc(l.name)}${l.active ? '' : ' <span class="muted">(inactive)</span>'}
+    <button type="button" class="link-btn" data-toggle="${l.id}" data-active="${l.active}">${l.active ? 'Deactivate' : 'Activate'}</button></span>`).join('') || '<span class="muted">No vessel yet.</span>';
+  $('wtg-summary').textContent = wtgs.length ? `${wtgs.filter((l) => l.active).length} active turbines.` : 'No turbines yet. Import the list below.';
+  $('wtg-rows').innerHTML = wtgs.map((l) => `<tr><td><b>${esc(l.name)}</b></td><td class="mono">${l.lat?.toFixed(5) ?? '—'}</td><td class="mono">${l.lon?.toFixed(5) ?? '—'}</td>
+    <td>${l.active ? '' : '<span class="badge">inactive</span> '}<button type="button" class="link-btn" data-toggle="${l.id}" data-active="${l.active}">${l.active ? 'Deactivate' : 'Activate'}</button></td></tr>`).join('');
+  document.querySelectorAll('[data-toggle]').forEach((b) => (b.onclick = async () => {
+    try { await api(`/api/p/${current.slug}/locations/${b.dataset.toggle}`, { method: 'PATCH', body: { active: b.dataset.active !== '1' } }); await loadLocations(); } catch (e) { toast(e.message, 'error'); }
+  }));
+  drawMap();
 }
 
-async function onAddLocation(e) {
+async function onAddSov(e) {
   e.preventDefault();
-  const body = Object.fromEntries(new FormData(e.target));
   try {
-    await api('/api/locations', { method: 'POST', body });
+    await api(`/api/p/${current.slug}/locations`, { method: 'POST', body: { kind: 'SOV', name: $('sov-name').value } });
     e.target.reset();
-    toast(`${body.name} added`, 'ok');
-    loadLocations();
+    await loadLocations();
+    await loadProjects();
   } catch (err) { toast(err.message, 'error'); }
+}
+
+async function onFile() {
+  const file = $('wtg-file').files[0];
+  if (!file) return;
+  $('wtg-text').value = await file.text();
+  onCheckList();
+}
+
+function onCheckList() {
+  parsed = parseLocationRows($('wtg-text').value);
+  const { rows, problems, warnings } = parsed;
+  const wtgs = rows.filter((r) => r.kind === 'WTG').length;
+  const sovs = rows.length - wtgs;
+  $('wtg-result').innerHTML =
+    (problems.length ? `<div class="notice notice-danger"><b>${problems.length} problem${problems.length === 1 ? '' : 's'}. Nothing is imported until these are fixed:</b><ul>${problems.slice(0, 12).map((p) => `<li>${p.line ? `Line ${p.line}: ` : ''}${esc(p.error)}</li>`).join('')}${problems.length > 12 ? `<li>…and ${problems.length - 12} more</li>` : ''}</ul></div>` : '') +
+    (warnings.length ? `<div class="notice notice-warn"><ul>${warnings.map((w) => `<li>${esc(w.warning)}</li>`).join('')}</ul></div>` : '') +
+    (rows.length && !problems.length ? `<div class="notice notice-ok">${wtgs} turbine${wtgs === 1 ? '' : 's'}${sovs ? ` and ${sovs} vessel${sovs === 1 ? '' : 's'}` : ''} ready. Check the positions on the map.</div>` : '');
+  $('wtg-import').classList.toggle('hidden', !rows.length || !!problems.length);
+  $('wtg-import').textContent = `Import ${rows.length} location${rows.length === 1 ? '' : 's'}`;
+  drawMap();
 }
 
 async function onImport() {
-  $('csv-error').textContent = '';
-  const rows = $('csv').value.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
-    .filter((l) => !/^name\s*[,;]/i.test(l)) // skip a header line
-    .map((l) => {
-      const [name, lat, lon, kind, radius_m] = l.split(/[;,\t]/).map((s) => s.trim());
-      return { name, lat, lon, kind: kind || 'WTG', ...(radius_m ? { radius_m } : {}) };
-    });
-  if (!rows.length) return;
+  if (!parsed || parsed.problems.length || !parsed.rows.length) return;
   try {
-    const { imported } = await api('/api/locations/import', { method: 'POST', body: { rows } });
+    const { imported } = await api(`/api/p/${current.slug}/locations/import`, { method: 'POST', body: { rows: parsed.rows.map(({ name, kind, lat, lon }) => ({ name, kind, lat, lon })) } });
     toast(`${imported} locations imported`, 'ok');
-    $('csv').value = '';
-    loadLocations();
+    parsed = null;
+    $('wtg-text').value = '';
+    $('wtg-result').innerHTML = '';
+    $('wtg-import').classList.add('hidden');
+    await loadLocations();
+    await loadProjects();
   } catch (err) {
-    $('csv-error').textContent = [err.message, ...(Array.isArray(err.details) ? err.details : [])].join('\n');
+    $('wtg-result').innerHTML = `<div class="notice notice-danger">${esc(err.message)}${Array.isArray(err.details) ? `<ul>${err.details.map((d) => `<li>${esc(d)}</li>`).join('')}</ul>` : ''}</div>`;
   }
 }
 
-// ---------------------------------------------------------------- users
-
-async function loadUsers() {
-  const { users } = await api('/api/users');
-  $('user-rows').innerHTML = users.map((u) => `<tr>
-    <td>${esc(u.name)}</td><td class="mono">${esc(u.username)}</td>
-    <td><select data-role="${u.id}" aria-label="Role of ${esc(u.name)}">${['technician', 'supervisor', 'manager', 'admin'].map((r) =>
-      `<option${r === u.role ? ' selected' : ''}>${r}</option>`).join('')}</select></td>
-    <td>${u.active ? '<span class="badge badge-ok">active</span>' : '<span class="badge">disabled</span>'}</td>
-    <td><button class="link-btn" data-toggle="${u.id}" data-active="${u.active}">${u.active ? 'Disable' : 'Enable'}</button>
-        <button class="link-btn" data-reset="${u.id}">Reset password</button></td>
-  </tr>`).join('');
-  const patch = async (id, body) => {
-    try { await api(`/api/users/${id}`, { method: 'PATCH', body }); toast('Saved', 'ok'); } catch (e) { toast(e.message, 'error'); }
-    loadUsers();
-  };
-  $('user-rows').querySelectorAll('[data-role]').forEach((s) => (s.onchange = () => patch(s.dataset.role, { role: s.value })));
-  $('user-rows').querySelectorAll('[data-toggle]').forEach((b) => (b.onclick = () => patch(b.dataset.toggle, { active: b.dataset.active !== '1' })));
-  $('user-rows').querySelectorAll('[data-reset]').forEach((b) => {
-    b.onclick = () => {
-      const password = prompt('New password (min. 8 characters):');
-      if (password) patch(b.dataset.reset, { password });
-    };
-  });
-}
-
-async function onAddUser(e) {
-  e.preventDefault();
-  try {
-    await api('/api/users', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) });
-    e.target.reset();
-    toast('User added', 'ok');
-    loadUsers();
-  } catch (err) { toast(err.message, 'error'); }
-}
-
-// ---------------------------------------------------------------- types
-//
-// Form-based editor for an equipment type's field list. It edits the same
-// field definitions as before (see fields.js), so nobody needs to write JSON.
-
-const TYPE_LABELS = {
-  number: 'Number', text: 'Text', boolean: 'Yes / No', select: 'Choose one', multiselect: 'Choose several', date: 'Date',
-};
-
-const PRESETS = {
-  fuel: { label: 'Fuel level', type: 'number', scope: 'check', required: true, min: 0, max: 100, step: 25, unit: '%', alert: { atMost: 25 } },
-  cube: { label: 'Fuel cube connected', type: 'boolean', scope: 'check', required: true, sovValue: false },
-  ok: { label: 'Condition OK', type: 'boolean', scope: 'check', required: true, alert: { equals: false } },
-  alarms: { label: 'Active alarms', type: 'multiselect', scope: 'check', options: ['Fault', 'Damage', 'Other'], alert: { any: true } },
-  manufacturer: { label: 'Manufacturer', type: 'text', scope: 'asset' },
-  inspection: { label: 'Next inspection', type: 'date', scope: 'asset' },
-};
-
-let draft = [];   // field definitions being edited; existing fields keep their key
-
-async function loadTypes(selectId) {
-  ({ types } = await api('/api/types'));
-  $('t-select').innerHTML = types.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('');
-  if (selectId) $('t-select').value = selectId;
-  $('t-add').onclick = () => addField({ label: '', type: 'text', scope: 'check' });
-  $('t-preset').onchange = () => {
-    const p = PRESETS[$('t-preset').value];
-    if (p) addField(structuredClone(p));
-    $('t-preset').value = '';
-  };
-  $('t-name').oninput = renderPreview;
-  showType();
-}
-
-function showType() {
-  const t = types.find((x) => x.id === $('t-select').value);
-  if (!t) return newType();
-  $('t-name').value = t.name;
-  draft = structuredClone(t.fields);
-  $('t-error').textContent = '';
-  renderDraft();
-}
-
-function newType() {
-  $('t-select').value = '';
-  $('t-name').value = '';
-  draft = [structuredClone(PRESETS.ok)];
-  $('t-error').textContent = '';
-  renderDraft();
-  $('t-name').focus();
-}
-
-function addField(f) {
-  draft.push(f);
-  renderDraft();
-  const cards = $('t-fields').querySelectorAll('.fdef');
-  cards[cards.length - 1]?.querySelector('[data-k=label]')?.focus();
-}
-
-function numAttr(v) {
-  return v == null ? '' : esc(v);
-}
-
-function alertControls(f) {
-  const a = f.alert || {};
-  if (f.type === 'number') {
-    const mode = a.atMost != null ? 'atMost' : a.below != null ? 'below' : a.above != null ? 'above' : '';
-    const val = a.atMost ?? a.below ?? a.above ?? '';
-    return `<div class="row">
-      <div class="field small"><label>Flag on overview when</label><select data-k="alertMode">
-        <option value="">Never</option>
-        <option value="atMost"${mode === 'atMost' ? ' selected' : ''}>at or below</option>
-        <option value="below"${mode === 'below' ? ' selected' : ''}>below</option>
-        <option value="above"${mode === 'above' ? ' selected' : ''}>above</option>
-      </select></div>
-      <div class="field small${mode ? '' : ' hidden'}"><label>Value</label><input data-k="alertValue" type="number" step="any" value="${esc(val)}"></div>
-    </div>`;
+/** Turbines already in the project (grey) and the list being checked (blue). */
+function drawMap() {
+  if (!window.L) return;
+  if (!map) {
+    map = L.map('loc-map').setView([54, 4], 5);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
+    mapLayer = L.layerGroup().addTo(map);
   }
-  if (f.type === 'boolean') {
-    const v = 'equals' in a ? String(a.equals) : '';
-    return `<div class="field"><label>Flag on overview when</label><select data-k="alertEquals">
-      <option value="">Never</option>
-      <option value="true"${v === 'true' ? ' selected' : ''}>answer is Yes</option>
-      <option value="false"${v === 'false' ? ' selected' : ''}>answer is No</option>
-    </select></div>`;
+  mapLayer.clearLayers();
+  const pts = [];
+  for (const l of locations.filter((x) => x.kind === 'WTG' && x.lat != null && x.active)) {
+    L.circleMarker([l.lat, l.lon], { radius: 5, color: '#5b6876', weight: 1, fillOpacity: 0.7 }).bindTooltip(l.name).addTo(mapLayer);
+    pts.push([l.lat, l.lon]);
   }
-  if (f.type === 'select') {
-    return `<div class="field"><label>Flag on overview when</label><select data-k="alertEquals">
-      <option value="">Never</option>
-      ${(f.options || []).map((o) => `<option value="${esc(o)}"${a.equals === o ? ' selected' : ''}>answer is ${esc(o)}</option>`).join('')}
-    </select></div>`;
+  for (const r of parsed?.rows.filter((x) => x.kind === 'WTG') || []) {
+    L.circleMarker([r.lat, r.lon], { radius: 6, color: '#155fa0', fillColor: '#155fa0', fillOpacity: 0.9 }).bindTooltip(r.name).addTo(mapLayer);
+    pts.push([r.lat, r.lon]);
   }
-  if (f.type === 'multiselect') {
-    return `<label class="check-inline"><input type="checkbox" data-k="alertAny"${a.any ? ' checked' : ''}> Flag on overview when anything is ticked</label>`;
-  }
-  return '';
+  setTimeout(() => { map.invalidateSize(); if (pts.length) map.fitBounds(pts, { padding: [30, 30], maxZoom: 13 }); }, 50);
 }
 
-function fieldCard(f, i) {
-  const choice = f.type === 'select' || f.type === 'multiselect';
-  return `<div class="fdef" data-i="${i}">
-    <div class="fdef-head">
-      <b>${i + 1}. ${esc(f.label || 'New field')}</b>
-      <div class="fdef-tools">
-        <button type="button" class="btn" data-act="up" title="Move up" aria-label="Move up"${i === 0 ? ' disabled' : ''}>↑</button>
-        <button type="button" class="btn" data-act="down" title="Move down" aria-label="Move down"${i === draft.length - 1 ? ' disabled' : ''}>↓</button>
-        <button type="button" class="btn btn-danger" data-act="remove" title="Remove" aria-label="Remove field">✕</button>
-      </div>
-    </div>
-    <div class="row">
-      <div class="field grow"><label>Question / label</label><input data-k="label" type="text" value="${esc(f.label)}" placeholder="e.g. Oil level OK"></div>
-      <div class="field small"><label>Answer type</label><select data-k="type">${Object.entries(TYPE_LABELS).map(([v, l]) =>
-        `<option value="${v}"${f.type === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
-    </div>
-    <div class="row">
-      <div class="field grow"><label>Asked</label><select data-k="scope">
-        <option value="check"${f.scope === 'check' ? ' selected' : ''}>On every scan</option>
-        <option value="asset"${f.scope === 'asset' ? ' selected' : ''}>Once, when linking the tag</option>
-      </select></div>
-      <label class="check-inline field"><input type="checkbox" data-k="required"${f.required ? ' checked' : ''}> Required</label>
-    </div>
-    ${choice ? `<div class="field"><label>Options (one per line)</label><textarea data-k="options" rows="3">${esc((f.options || []).join('\n'))}</textarea></div>` : ''}
-    ${f.type === 'number' ? `<div class="row">
-      <div class="field small"><label>Unit</label><input data-k="unit" type="text" value="${esc(f.unit || '')}" placeholder="%, h, bar"></div>
-      <div class="field small"><label>Min</label><input data-k="min" type="number" step="any" value="${numAttr(f.min)}"></div>
-      <div class="field small"><label>Max</label><input data-k="max" type="number" step="any" value="${numAttr(f.max)}"></div>
-      <div class="field small"><label>Steps of</label><input data-k="step" type="number" step="any" min="0" value="${numAttr(f.step)}" placeholder="any"></div>
-    </div>` : ''}
-    ${f.type === 'boolean' && f.scope === 'check' ? `<div class="field"><label>On the vessel (SOV)</label><select data-k="sovValue">
-      <option value=""${'sovValue' in f ? '' : ' selected'}>Ask as usual</option>
-      <option value="false"${f.sovValue === false ? ' selected' : ''}>Don't ask - always No</option>
-      <option value="true"${f.sovValue === true ? ' selected' : ''}>Don't ask - always Yes</option>
-    </select></div>` : ''}
-    ${f.type === 'boolean' && f.scope === 'check' ? `<div class="field"><label>When the answer is Yes</label><select data-k="pairWith">
-      <option value="">Nothing else</option>
-      ${types.filter((t) => t.id !== $('t-select').value).map((t) => `<option value="${esc(t.id)}"${f.pairWith === t.id ? ' selected' : ''}>Scan and link a ${esc(t.name.toLowerCase())}</option>`).join('')}
-    </select></div>` : ''}
-    ${alertControls(f)}
-    ${f.key ? `<p class="muted" style="margin:0;font-size:.8rem">Data key: <code>${esc(f.key)}</code></p>` : ''}
-  </div>`;
-}
+// ---------------------------------------------------------------- generic labels
 
-function renderDraft() {
-  $('t-fields').innerHTML = draft.map(fieldCard).join('') || '<p class="muted">No fields yet. Add one below.</p>';
-  $('t-fields').querySelectorAll('.fdef').forEach((card) => {
-    const i = Number(card.dataset.i);
-    card.querySelectorAll('[data-act]').forEach((b) => (b.onclick = () => {
-      const act = b.dataset.act;
-      if (act === 'remove') {
-        if (draft[i].key && !confirm(`Remove "${draft[i].label}"? Past readings keep their values.`)) return;
-        draft.splice(i, 1);
-      } else {
-        const j = act === 'up' ? i - 1 : i + 1;
-        [draft[i], draft[j]] = [draft[j], draft[i]];
-      }
-      renderDraft();
-    }));
-    card.querySelectorAll('[data-k]').forEach((el) => {
-      // Changes that alter which inputs are shown re-render the card list.
-      const structural = ['type', 'scope', 'alertMode', 'options'].includes(el.dataset.k);
-      el.addEventListener(el.tagName === 'SELECT' || el.type === 'checkbox' ? 'change' : 'input', () => {
-        updateField(draft[i], el.dataset.k, el.type === 'checkbox' ? el.checked : el.value);
-        if (el.dataset.k === 'label') card.querySelector('.fdef-head b').textContent = `${i + 1}. ${el.value || 'New field'}`;
-        if (structural && el.tagName === 'SELECT') renderDraft(); else renderPreview();
-      });
-      if (el.dataset.k === 'options') el.addEventListener('change', renderDraft);
-    });
-  });
-  renderPreview();
-}
-
-function parseOptions(text) {
-  const lines = text.split('\n').map((s) => s.trim()).filter(Boolean);
-  const list = lines.length === 1 && lines[0].includes(',') ? lines[0].split(',').map((s) => s.trim()).filter(Boolean) : lines;
-  return [...new Set(list)];
-}
-
-function updateField(f, k, v) {
-  const num = (x) => (x === '' || x == null ? undefined : Number(x));
-  switch (k) {
-    case 'label': f.label = v; break;
-    case 'scope': f.scope = v; if (v !== 'check') { delete f.sovValue; delete f.pairWith; } break;
-    case 'required': if (v) f.required = true; else delete f.required; break;
-    case 'type':
-      f.type = v;
-      if (v === 'select' || v === 'multiselect') f.options ??= ['Option 1', 'Option 2'];
-      else delete f.options;
-      if (v !== 'number') for (const x of ['unit', 'min', 'max', 'step']) delete f[x];
-      delete f.alert;
-      delete f.sovValue;
-      delete f.pairWith;
-      break;
-    case 'sovValue': if (v === '') delete f.sovValue; else f.sovValue = v === 'true'; break;
-    case 'pairWith': if (v === '') delete f.pairWith; else f.pairWith = v; break;
-    case 'options': f.options = parseOptions(v); break;
-    case 'unit': if (v.trim()) f.unit = v.trim(); else delete f.unit; break;
-    case 'min': case 'max': case 'step': {
-      const n = num(v);
-      if (n === undefined || Number.isNaN(n)) delete f[k]; else f[k] = n;
-      break;
-    }
-    case 'alertMode': {
-      const prev = f.alert ? (f.alert.atMost ?? f.alert.below ?? f.alert.above) : undefined;
-      if (!v) delete f.alert; else f.alert = { [v]: prev ?? 0 };
-      break;
-    }
-    case 'alertValue': {
-      const mode = f.alert && Object.keys(f.alert)[0];
-      if (mode) f.alert = { [mode]: num(v) ?? 0 };
-      break;
-    }
-    case 'alertEquals':
-      if (v === '') delete f.alert;
-      else f.alert = { equals: f.type === 'boolean' ? v === 'true' : v };
-      break;
-    case 'alertAny': if (v) f.alert = { any: true }; else delete f.alert; break;
-  }
-}
-
-/** Gives new fields a stable data key derived from their label. */
-function withKeys(fields) {
-  const used = new Set(fields.map((f) => f.key).filter(Boolean));
-  return fields.map((f) => {
-    if (f.key) return f;
-    let base = (f.label || 'field').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 34) || 'field';
-    if (!/^[a-z]/.test(base)) base = `f_${base}`;
-    let key = base;
-    for (let n = 2; used.has(key); n++) key = `${base}_${n}`;
-    used.add(key);
-    return { key, ...f };
-  });
-}
-
-function renderPreview() {
-  $('t-error').textContent = '';
-  const fields = withKeys(draft.filter((f) => f.label));
-  renderFields($('t-preview-asset'), fields, 'asset');
-  renderFields($('t-preview-check'), fields, 'check');
-}
-
-async function saveType() {
-  $('t-error').textContent = '';
-  const name = $('t-name').value.trim();
-  const problems = [];
-  if (!name) problems.push('Give the equipment type a name.');
-  draft.forEach((f, i) => {
-    if (!f.label?.trim()) problems.push(`Field ${i + 1}: enter a question / label.`);
-    if ((f.type === 'select' || f.type === 'multiselect') && !(f.options || []).length) problems.push(`Field ${i + 1}: add at least one option.`);
-    if (f.min != null && f.max != null && f.min > f.max) problems.push(`Field ${i + 1}: min is larger than max.`);
-  });
-  const fields = withKeys(draft.map((f) => ({ ...f, label: f.label?.trim() })));
-  if (!problems.length) problems.push(...validateFieldDefs(fields));
-  if (problems.length) {
-    $('t-error').textContent = problems.join('\n');
-    return;
-  }
-  const id = $('t-select').value;
-  try {
-    const { type } = id
-      ? await api(`/api/types/${id}`, { method: 'PATCH', body: { name, fields } })
-      : await api('/api/types', { method: 'POST', body: { name, fields } });
-    toast(`${type.name} saved`, 'ok');
-    loadTypes(type.id);
-  } catch (err) {
-    $('t-error').textContent = [err.message, ...(Array.isArray(err.details) ? err.details : [])].join('\n');
-  }
+function makeLabels() {
+  const n = Math.max(1, Math.min(500, Number($('lb-count').value) || 100));
+  const size = Number($('lb-size').value) || 35;
+  const base = siteBase();
+  const sheet = $('lb-sheet');
+  sheet.style.setProperty('--label-mm', `${size}mm`);
+  sheet.innerHTML = Array.from({ length: n }, () => {
+    const code = newTagCode();
+    return `<div class="label-sticker">${qrSvg(tagUrl(code, base), { margin: 1 })}<div class="l-code">${esc(code)}</div></div>`;
+  }).join('');
+  sheet.classList.remove('hidden');
+  printOnly(sheet);
 }

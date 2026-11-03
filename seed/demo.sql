@@ -1,4 +1,5 @@
--- Demo data for testing (fictional wind farm, generators, readings). Not applied by migrations.
+-- Demo data for testing (fictional wind farm, generators, readings), in the DEMO project.
+-- Not applied by migrations. Delete the whole project from the admin page when done.
 -- Remove with: DELETE FROM readings WHERE asset_id LIKE 'demo-%'; DELETE FROM assets WHERE id LIKE 'demo-%'; DELETE FROM locations WHERE id LIKE 'demo-%';
 INSERT OR IGNORE INTO locations (id, kind, name, lat, lon, radius_m) VALUES
   ('demo-wtg-A01', 'WTG', 'WTG A01', 54.00000, 6.00000, 300),
@@ -18,14 +19,14 @@ INSERT OR IGNORE INTO locations (id, kind, name, lat, lon, radius_m) VALUES
 -- Demo generators with QR tags. Each one shows a different state on the overview.
 -- Tag codes AT-DEMO0001..8 can be typed into the Scan screen (or encoded as QR).
 INSERT OR IGNORE INTO assets (id, type_id, serial, name, attributes) VALUES
-  ('demo-gen-01', 'generator', 'GEN-350-001', 'Demo - healthy at WTG',        '{"kva":"350 kVA","manufacturer":"Caterpillar"}'),
-  ('demo-gen-02', 'generator', 'GEN-350-002', 'Demo - low fuel',              '{"kva":"350 kVA","manufacturer":"Cummins"}'),
-  ('demo-gen-03', 'generator', 'GEN-030-001', 'Demo - active alarm',          '{"kva":"30 kVA","manufacturer":"Atlas Copco"}'),
-  ('demo-gen-04', 'generator', 'GEN-030-002', 'Demo - on vessel',             '{"kva":"30 kVA","manufacturer":"Atlas Copco"}'),
-  ('demo-gen-05', 'generator', 'GEN-030-003', 'Demo - GPS jammed, manual',    '{"kva":"30 kVA","manufacturer":"Pramac"}'),
-  ('demo-gen-06', 'generator', 'GEN-350-003', 'Demo - not scanned 10 days',   '{"kva":"350 kVA","manufacturer":"Caterpillar"}'),
-  ('demo-gen-07', 'generator', 'GEN-030-004', 'Demo - moved WTG to WTG',      '{"kva":"30 kVA","manufacturer":"Pramac"}'),
-  ('demo-gen-08', 'generator', 'GEN-350-004', 'Demo - never scanned (new)',   '{"kva":"350 kVA","manufacturer":"Cummins"}');
+  ('demo-gen-01', 'generator', 'GEN-350-001', 'Demo - healthy at WTG',        json_object('kva','350 kVA','manufacturer','Caterpillar','inspection_due',date('now','+120 days'))),
+  ('demo-gen-02', 'generator', 'GEN-350-002', 'Demo - low fuel',              json_object('kva','350 kVA','manufacturer','Cummins','inspection_due',date('now','+10 days'))),
+  ('demo-gen-03', 'generator', 'GEN-030-001', 'Demo - active alarm',          json_object('kva','30 kVA','manufacturer','Atlas Copco','inspection_due',date('now','-5 days'))),
+  ('demo-gen-04', 'generator', 'GEN-030-002', 'Demo - on vessel',             json_object('kva','30 kVA','manufacturer','Atlas Copco','inspection_due',date('now','+200 days'))),
+  ('demo-gen-05', 'generator', 'GEN-030-003', 'Demo - GPS jammed, manual',    json_object('kva','30 kVA','manufacturer','Pramac','inspection_due',date('now','+60 days'))),
+  ('demo-gen-06', 'generator', 'GEN-350-003', 'Demo - not scanned 10 days',   json_object('kva','350 kVA','manufacturer','Caterpillar','inspection_due',date('now','+300 days'))),
+  ('demo-gen-07', 'generator', 'GEN-030-004', 'Demo - moved WTG to WTG',      json_object('kva','30 kVA','manufacturer','Pramac','inspection_due',date('now','+20 days'))),
+  ('demo-gen-08', 'generator', 'GEN-350-004', 'Demo - never scanned (new)',   json_object('kva','350 kVA','manufacturer','Cummins','inspection_due',date('now','+365 days')));
 
 INSERT OR IGNORE INTO tags (code, asset_id, kind) VALUES
   ('AT-DEMO0001', 'demo-gen-01', 'qr'),
@@ -63,9 +64,9 @@ VALUES
 -- Demo fuel cubes (needs migration 0007). Cube 1 is connected to GEN-350-001 at
 -- WTG A01; cube 2 stands at WTG A03 without a known generator; cube 3 is new.
 INSERT OR IGNORE INTO assets (id, type_id, serial, name, attributes) VALUES
-  ('demo-cube-01', 'fuel-cube', 'FC-001', 'Demo - with generator at A01', '{}'),
-  ('demo-cube-02', 'fuel-cube', 'FC-002', 'Demo - at A03, not linked',    '{}'),
-  ('demo-cube-03', 'fuel-cube', 'FC-003', 'Demo - new',                   '{}');
+  ('demo-cube-01', 'fuel-cube', 'FC-001', 'Demo - with generator at A01', json_object('size','Large','inspection_due',date('now','+150 days'))),
+  ('demo-cube-02', 'fuel-cube', 'FC-002', 'Demo - at A03, not linked',    json_object('size','Small','inspection_due',date('now','+25 days'))),
+  ('demo-cube-03', 'fuel-cube', 'FC-003', 'Demo - new',                   json_object('size','Large','inspection_due',date('now','+200 days')));
 
 INSERT OR IGNORE INTO tags (code, asset_id, kind) VALUES
   ('AT-DEMOC001', 'demo-cube-01', 'qr'),
