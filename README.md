@@ -1,142 +1,113 @@
 # AssetTracker
 
-Track generators and other offshore equipment with QR codes and NFC tags. It runs on
-Cloudflare (Workers + D1) and has an offline-first phone app for technicians.
+Track generators and fuel cubes (and other equipment) on offshore wind projects with
+QR labels. Runs on Cloudflare Workers + D1 as an offline-first web app for phones.
 
-| Screen | Path | Who | Purpose |
+Each **project** has its own link, for example `oam.eu/BLP` or `oam.eu/HD`. Whoever
+has the link (or its QR code) sees that project only.
+
+## Pages
+
+| Page | Address | For | What it does |
 |---|---|---|---|
-| **Overview** | `/overview` | Site manager (also supervisor, admin) | Top: **Assign a location** (pick a serial number, choose the SOV or a WTG). Then a searchable list of equipment **on the vessel** and a searchable list of **turbines with their equipment**, each showing fuel level, a ⚠ warning symbol and last check. Map, history, CSV export. Serials are only used for searching and assigning |
-| **Add equipment** | `/add` | Warehouse supervisor, on the phone | Step by step: rating (e.g. 30 / 350 kVA), serial number, stick the QR label on the generator window, scan it, saved |
-| **Link tags** | `/link` | Warehouse supervisor | Edit equipment and tags, print sheets of blank QR labels, read/write NFC tags |
-| **Scan** | `/field` | Technicians and warehouse supervisor | Scan QR/NFC, auto-detect WTG or SOV by GPS, enter fuel level, fuel cube, alarms. Works offline and syncs later |
-| **Setup** | `/admin` | Admin (locations also supervisor) | WTG/SOV locations (CSV import), users and roles, equipment types and their fields |
+| **Start** | `/` | everyone | Enter a project code; explains unlinked labels |
+| **Project home** | `/BLP` | everyone | First visit: how to add the app to the home screen (iPhone, Android, laptop). Then three entry points |
+| **Scan** | `/BLP/field` | technicians | Guided questions after scanning a QR label (see below). Works offline |
+| **Warehouse** | `/BLP/warehouse` | warehouse supervisor | Add equipment, *Refuelled*, *Serviced*, things to investigate, equipment list (edit, retire, attach label), import from Excel |
+| **Add equipment** | `/BLP/add` | warehouse supervisor | Step by step: type, rating / size, lifting points inspection date, serial number, stick the label, scan it |
+| **Overview** | `/BLP/overview` | site manager | What is on the vessel and on each turbine, fuel level, ⚠ warnings, map, service report, refuel planning, assign a location by serial number |
+| **Admin** | `/admin` | the owner | Create projects and hand out their QR code, settings, turbines, generic QR labels to print, equipment types |
 
-## How the field app decides the location
+## The guided scan (technicians)
 
-With `"GEO_CHECK": "on"` in `wrangler.jsonc`, the phone's GPS fix is compared with the
-surveyed WTG positions. The check uses the cached location list, so it works offline
-(`public/js/geo.js`). The result is only a **suggestion**: **Change location** always lets the
-user pick any WTG, SOV or **Here (phone GPS position)**.
+Open the app (a short animation), scan the QR label, then one question per screen:
 
-| Situation | Suggested location |
-|---|---|
-| Fix within a WTG's radius (default 300 m) | That WTG, marked **GPS** |
-| Within the wind farm (< 30 km of a WTG) but not at a turbine | The SOV (the user picks one if there are several) |
-| Away from the farm (> 30 km): shore, train, warehouse | **Here**, the phone's own GPS position, with no WTG/SOV |
-| More than 150 km away | **Here**, with a warning that offshore this can mean GPS jamming |
-| No fix, fix older than 2 min, or 0,0 | Nothing: the user selects the location (GPS jamming) |
-| Accuracy worse than ±150 m | Nearest WTG, which the user is asked to confirm |
+1. **Where are you?** The phone suggests the turbine by GPS: **Confirm** or **Edit**.
+2. **Alarms:** tick the active ones, or tap *No alarms*.
+3. **Fuel cube:**
+   * Known to be here with this generator: *Is the fuel cube still here?* **No** moves the cube back to the vessel without a reading, and the warehouse supervisor is told.
+   * Not known: *Fuel cube connected?* **Yes** asks to scan the cube.
+   * Scanning a fuel cube asks about its generator in the same way.
+   * Not asked on the vessel: a fuel cube is never connected there, so it is recorded as *No*.
+4. **Fuel level** (0 / 25 / 50 / 75 / 100 %). With a connected cube the level is recorded for both units.
+5. **Ready to save.** A warning is shown if the level is low or an alarm is active.
 
-Readings saved at **Here** appear on the overview under **Elsewhere**, with their coordinates
-and a map pin. Every reading records whether its location came from GPS or was chosen by
-hand, plus the GPS status, raw fix, accuracy and distance to the WTG.
+**Something is wrong** (always on screen): the label does not match the equipment, or the serial is different.
+An unknown label can be reported too. These end up under **Warehouse → To investigate**.
 
-`"GEO_CHECK": "off"` turns the suggestion off completely, and the location is always picked by hand.
+The first time, a three-card introduction explains the steps.
 
-## Generators and fuel cubes
+## Projects, links and onboarding
 
-Fuel cubes are tracked equipment too, with their own QR label and fuel level.
+* **Admin → New project:** name, link (for example `BLP`), client, contact e-mail.
+* **Link and onboarding:** the project link as a QR code, a printable **onboarding sheet** (save as PDF if you like),
+  a QR image to attach, and a prepared **e-mail** to the contact (opens your e-mail program; attach the QR or sheet).
+  The app cannot send e-mail itself yet.
+* **Site address:** QR codes and labels contain it permanently. Set your final domain (for example `https://oam.eu`)
+  in Admin before printing anything.
+* **Settings per project:** location mode, GPS radius per turbine, wind farm area, NFC on/off.
+* **Close** makes a project read-only (export all readings to CSV first). **Delete** removes everything in it; you must type its link.
+* **No personal names** are stored. People are not asked who they are, and readings carry no user or device name.
 
-* Scanning a **generator** and answering **Fuel cube connected: Yes** pops up
-  **Scan the fuel cube**. The scanned cube is linked to the generator and recorded at the same location.
-* Scanning a **fuel cube** at a WTG pops up **Scan the generator** (or *Not connected to a generator*).
-* There is **no popup** when the phone already knows that the two are together at that WTG.
-  Both units must be linked to each other and last seen there. The check works offline, including
-  scans still waiting to sync.
-* Scanning the wrong kind of label in the popup is refused, for example a fuel cube label when the generator is asked for.
-* The overview shows linked units as "⛓ with Fuel cube" / "⛓ with Generator 350 kVA".
-* This is set up per question, not hard-coded. In Setup → Equipment types, any yes/no question has
-  **When the answer is Yes → Scan and link a …**.
+## Location: testing and live
+
+| Mode | Phone is at a turbine | Inside the wind farm area | Outside the area / no GPS / jammed |
+|---|---|---|---|
+| **Testing** | that WTG is suggested | the vessel is suggested | *Here* (phone position) is allowed |
+| **Live** | that WTG is suggested | the vessel is suggested | the location **must be chosen by hand**; *Here* does not exist |
+
+The suggestion can always be changed. A vessel has no fixed position. The server also refuses a live-mode reading without a WTG or vessel.
+GPS radius and wind farm area (km from the nearest turbine) are project settings.
+
+## Equipment
+
+* **Equipment types** (Admin) define what is asked: fixed details when adding (rating, size, inspection date) and questions on every scan.
+  Yes/No questions can be hidden on the vessel (fuel cube) or link to another type ("scan the fuel cube").
+  Date fields can warn when a date is close: the **lifting points inspection** warns 30 days ahead and when overdue.
+* **Fuel cube** size (Large / Small) is set when adding it.
+* **Refuelled / Serviced** (Warehouse): scan or choose a serial, confirm. *Serviced* asks for the next inspection date.
+  Both work offline.
+* **Service report** (Overview): inspections due or overdue, and units with alarms. Copy, CSV or print.
+* **Refuel planning** (Overview): units on turbines at or below 25 / 50 / 75 %, lowest first.
+* **Import from Excel:** download the template (CSV, opens in Excel), fill in one row per unit, save as CSV and import.
+  Ratings like `350` and dates like `31-12-2026` are understood. Equipment arrives without labels; attach one by tapping the row in the equipment list.
+* **Retire** equipment in the equipment list; its history is kept.
+
+## QR labels
+
+Labels are **generic**: a random code such as `AT-7K3QX9M2PD`, no serial number, no project. Print a batch (Admin → *QR labels to print*)
+on sticker sheets, send them to a project, and link each to equipment by scanning it in *Add equipment*.
+A label encodes `https://<site>/t/<code>`. Scanning it with the phone's normal camera opens the right project.
+A label that is not linked yet shows a message with what to do.
+
+**NFC** (Android Chrome, off by default) is switched on per project in Admin.
 
 ## Offline and sync
 
-* The app shell is cached by a service worker (`public/sw.js`). Assets, tags and
-  locations are cached in IndexedDB on every online start.
-* Readings go into an IndexedDB **outbox** first and never wait for the network.
-* The outbox syncs automatically when the connection comes back (`online` event, app
-  focus, every 60 s, Background Sync on Android), so it uploads once the phone is back on
-  the vessel's network. The **Sync now** button forces it.
-* Sync is idempotent. Each reading has a UUID generated on the phone, so a retried
-  upload is stored once.
-* If the server rejects a reading (for example a tag that was never linked), it stays on
-  the phone with the reason shown. It is never dropped silently.
-* Sessions last 30 days, so a technician who signed in on the vessel can work offline for
-  days.
-
-## QR and NFC
-
-* Tag codes look like `AT-7K3QX9M2PD`. QR labels encode `https://<your-site>/field#t=<code>`,
-  so the phone's normal camera app opens the asset directly. The in-app scanner works as
-  well (BarcodeDetector, or the bundled jsQR).
-* **NFC** uses Web NFC, which works on **Android Chrome** only. On the Link screen you
-  can read a tag (its chip serial becomes `NFC-<serial>`) or write the tag URL onto it.
-  A tag with the URL written on it also opens the app when tapped with an **iPhone**,
-  through the native NFC reader. Writing the URL is recommended.
-* One asset can carry several tags, for example a QR label plus an NFC tag.
-
-## Extending to other equipment
-
-Go to **Setup → Equipment types** and click **+ New equipment type**, or pick an existing
-type to change it. No code, JSON or database change is needed. For each field you choose:
-
-* **Question / label**, e.g. "Lamps working".
-* **Answer type**: Number, Text, Yes / No, Choose one, Choose several, or Date.
-* **Asked**: on every scan (fuel level, alarms) or once when linking the tag (kVA rating, manufacturer).
-* **Required**, and for numbers the unit, min, max and **steps of**. For example, steps of
-  25 between 0 and 100 shows 0 / 25 / 50 / 75 / 100 % buttons.
-* **Flag on overview when**: the value is at or below / below / above a number, or a
-  given answer is picked, or any alarm is ticked.
-
-Yes / No questions can be fixed **on the vessel (SOV)**. The generator's *Fuel cube connected* is set to "Don't ask - always No", so on the SOV it is hidden and recorded as No. The server enforces this as well.
-
-**+ Add common field** inserts ready-made fields: fuel level, fuel cube connected, condition OK,
-alarms, manufacturer and next inspection date. A live preview shows the link and scan
-forms as they will appear on the phone. Each field gets a data key from its label. The key
-never changes, even if the label is renamed later, so past readings stay linked to it.
-
-## Access (no login for now)
-
-`wrangler.jsonc` sets `"AUTH_MODE": "open"`: there are **no logins**. Anyone with the URL can
-use every screen. The landing page asks for a name once per phone, and that name is saved
-with each reading so the overview still shows who scanned what.
-
-To require accounts later, set `"AUTH_MODE": "login"`, set the `SESSION_SECRET` and
-`SETUP_KEY` secrets, and redeploy. Phones that were in open mode are sent to the sign-in
-page on their next sync, and their queued readings are kept. Roles then apply as below.
-
-## Roles (login mode)
-
-| Role | Overview | Link tags | Scan | Locations | Users / types |
-|---|:-:|:-:|:-:|:-:|:-:|
-| technician | | | ✓ | | |
-| supervisor | ✓ | ✓ | ✓ | ✓ | |
-| manager | ✓ | | ✓ | | |
-| admin | ✓ | ✓ | ✓ | ✓ | ✓ |
+* The app and its pages are cached by a service worker after the first visit (the project home page prepares the other pages).
+* The equipment list, locations and settings are cached on the phone each time the app opens online.
+* Everything a technician or warehouse person records is stored in an outbox on the phone first and sent automatically when
+  the connection returns (back on the vessel network). *Sync now* forces it.
+* Sync is idempotent: each item has an id made on the phone, so a retry is stored once.
+  An item the server refuses stays on the phone with the reason.
+* Whether a generator and fuel cube are already known to be together is decided on the phone, including scans still waiting to sync.
 
 ## Deploy to Cloudflare
+
+The D1 database `assetdatabase` is configured in `wrangler.jsonc`.
 
 ```bash
 npm install
 npx wrangler login
-# D1 database "assetdatabase" already exists and is configured in wrangler.jsonc
-npm run db:migrate:remote
-npx wrangler d1 execute assetdatabase --remote --file=seed/demo.sql   # optional demo data
+npm run db:migrate:remote        # applies migrations 0001 ... 0009
 npm run deploy
 ```
 
-Open the site, enter your name, then:
-1. Setup → import the WTG coordinates (CSV `name,lat,lon`) and add the SOV(s).
-2. Link tags → register generators and print or write their tags.
+Then, in the Cloudflare dashboard, add your domain to the Worker (Workers & Pages → assettracker → Settings → Domains & Routes),
+for example `oam.eu`. Open `/admin`, create the first project, and hand out its QR code.
 
-(Login mode only: first run `npx wrangler secret put SESSION_SECRET` and
-`npx wrangler secret put SETUP_KEY`, create the admin with the setup key, then add users under Setup.)
-
-Technicians should open `/field` once while online and use **Add to Home screen**.
-
-Hardening suggestions for production:
-* Put the site behind **Cloudflare Access** (SSO) and/or add a WAF rate-limit rule on
-  `/api/auth/login`.
-* Use a custom domain. QR labels encode the site URL, so pick the domain before printing labels.
+Access is by project link only (`AUTH_MODE` is `open`). The admin page is not protected yet: put the site behind
+**Cloudflare Access** (Zero Trust) before real use. The older account system (`AUTH_MODE=login`) is still in the code but not used by the pages.
 
 ## Local development
 
@@ -144,45 +115,47 @@ Hardening suggestions for production:
 npm install
 cp .dev.vars.example .dev.vars
 npm run db:migrate:local
-npm run db:seed:local        # optional: demo wind farm (12 WTGs + 1 SOV)
-npm run dev                  # http://localhost:8787 (open mode; add --var AUTH_MODE:login to test logins, setup key: dev-setup-key)
-npm test                     # unit tests for location resolution and field validation
+npm run db:seed:local        # optional: demo project DEMO (12 turbines, a vessel, 8 generators, 3 fuel cubes)
+npm run dev                  # http://localhost:8787  ->  /DEMO  and  /admin
+npm test                     # unit tests
 ```
 
-Camera, GPS and NFC need HTTPS on a real phone. `localhost` is fine on a desktop. For
-phone testing use `npx wrangler dev --remote`, or a Cloudflare tunnel.
+The demo data lives in the project `DEMO`; delete that project in Admin when you are done with it.
+Camera, GPS and NFC need HTTPS on a real phone. `localhost` is fine on a desktop.
 
 ## Project layout
 
 ```
-src/                Worker (API)        index.js, api.js, auth.js, http.js
-migrations/         D1 schema + generator type
-public/             Static PWA
-  js/fields.js      field definitions + validation (shared with the Worker)
-  js/geo.js         GPS -> WTG/SOV resolution, jamming checks
-  js/store.js       IndexedDB cache + outbox
-  js/field.js       Scan screen
-  js/link.js        Link screen
-  js/overview.js    Overview screen
-  js/admin.js       Setup screen
+src/index.js        Worker: routing (/api, /t/CODE, /<project>/<page>), security headers
+src/api.js          API (project routes under /api/p/<link>/..., admin routes under /api/projects, /api/types)
+migrations/         D1 schema (0008 adds projects, 0009 inspection dates)
+public/
+  index.html project.html field.html add.html warehouse.html overview.html admin.html
+  js/app.js         project from the address, API calls, offline cache + sync
+  js/field.js       guided scan        js/add.js  add equipment      js/warehouse.js  warehouse hub
+  js/overview.js    overview           js/admin.js  admin            js/project.js  project home
+  js/fields.js      field definitions, validation, warnings (shared with the Worker)
+  js/geo.js         GPS -> WTG / vessel, testing and live mode
+  js/pairing.js     generator <-> fuel cube          js/equipment.js, reports.js  names, warnings, reports
+  js/coords.js      turbine list / coordinate parser js/importer.js  equipment import
   sw.js             service worker
-  vendor/           Leaflet, jsQR, qrcode-generator (bundled for offline use; `npm run vendor`)
-seed/demo.sql       demo locations
+seed/demo.sql       demo project
 test/               node:test unit tests
 ```
 
 ## API summary
 
-In login mode, all endpoints except auth require `Authorization: Bearer <token>`. In open mode no token is needed.
+Project routes are under `/api/p/<link>`:
 
 | Method | Path | Notes |
 |---|---|---|
-| POST | `/api/auth/setup`, `/api/auth/login` | returns `{ token, user }` |
-| GET | `/api/bootstrap` | types, locations, assets and tags for the offline cache |
-| GET / POST / PATCH | `/api/assets[/:id]` | list with latest reading; detail with history |
-| POST / DELETE | `/api/assets/:id/tags`, `/api/tags/:code` | link or unlink a tag |
-| POST | `/api/assets/:id/move` | put a unit at a location by hand (stored as a `move` reading) |
-| POST | `/api/readings/sync` | batch upload of up to 500 readings, idempotent, per-item result |
-| GET | `/api/readings` | filter by `asset_id`, `location_id`, `from`, `to` |
-| GET / POST / PATCH | `/api/locations`, `/api/locations/import` | |
-| GET / POST / PATCH | `/api/types`, `/api/users` | admin |
+| GET | `/bootstrap` | settings, types, locations, equipment: the offline copy |
+| GET | `/assets` | equipment with where it is and its latest values (overview, reports) |
+| POST / PATCH | `/assets`, `/assets/:id`, `/assets/import` | add, edit or retire, bulk import |
+| POST | `/assets/:id/move`, `/assets/:id/tags` | place by hand, attach a label |
+| POST | `/readings/sync` | batch upload of scans, moves, events (refuel, service) and issues; idempotent |
+| GET / POST / PATCH | `/locations`, `/locations/import` | turbines and vessels |
+| GET / PATCH | `/issues` | things to investigate |
+| GET | `/readings` | for export |
+
+Admin: `/api/projects` (list, create, update, delete) and `/api/types`. Closed projects accept no writes.

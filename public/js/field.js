@@ -1,294 +1,142 @@
-// Field app for technicians and warehouse supervisors: scan a tag, confirm the
-// location (GPS against known WTG positions, or manual when GPS is jammed),
-// enter the check values, and queue the reading for sync.
+// Guided scan flow for technicians. Open the app, scan the QR label, and answer one
+// question per screen:
+//   location (confirm or edit) -> alarms -> fuel cube (still there? connected?)
+//   -> fuel level -> summary -> save.
+// Everything is saved on the phone first and synced when there is a connection.
 import {
-  ago, api, can, deviceId, esc, loadReference, registerServiceWorker, renderHeader, requireLogin,
+  SLUG, ago, api, esc, loadReference, path, registerServiceWorker, renderHeader, requireProject,
   startAutoSync, syncNow, toast, updateSyncPill,
 } from './app.js';
-import { applyLocationRules, evaluateAlerts, fixedAt, normalizeValues } from './fields.js';
-import { collectFields, renderFields, showErrors } from './forms.js';
+import { kindOf, typeById } from './equipment.js';
+import { applyLocationRules, evaluateAlerts, fixedAt, formatValue, normalizeValues } from './fields.js';
 import { distanceM, resolveLocation } from './geo.js';
 import { knownPartner, pairingFor } from './pairing.js';
 import { nfcSupported, parseTagText, readNfc, scanQr } from './scan.js';
 import { cache, outbox } from './store.js';
 
-const user = requireLogin('field');
+const ok = requireProject();
 const $ = (id) => document.getElementById(id);
 
-let ref = null;          // offline reference data (types, locations, assets)
-let current = null;      // { asset, type, code, pairing, pair }
-let pending = [];        // outbox readings, so offline links count as known
-let bestFix = null;      // most recent GPS fix
-let resolution = null;   // result of resolveLocation
-let chosenLocation = null;
-
-// Pseudo location: "wherever the phone is" (shore, train, warehouse...). Saved
-// with the GPS fix and no WTG/SOV.
-const HERE = { id: '__gps', kind: 'GPS', name: 'Phone GPS position' };
-let manualChoice = false;
+let ref = null;          // offline snapshot of this project (types, locations, equipment)
+let fix = null;          // latest GPS fix
+let resolution = null;   // what the GPS fix says about the location
+let pending = [];        // outbox items, so connections recorded offline count as known
+let s = null;            // the scan in progress
+let trail = [];          // steps visited, for Back
 let fixTimer = null;
 
-if (user) init();
+// "Wherever the phone is" (testing only; in live mode the location is always a WTG or vessel).
+const HERE = { id: '__gps', kind: 'GPS', name: 'Phone GPS position' };
+const testMode = () => ref?.settings?.geoMode !== 'live';
+
+if (ok) init();
 
 async function init() {
   renderHeader('field');
   registerServiceWorker();
   startAutoSync();
+  showSplash();
   try {
     ref = await loadReference();
   } catch (e) {
     toast(e.message, 'error');
-    ref = { types: [], locations: [], assets: [] };
+    ref = { types: [], locations: [], assets: [], settings: {}, openIssues: 0 };
   }
   showDataAge();
   renderOutbox();
   watchGps();
 
-  if (nfcSupported()) $('btn-nfc').classList.remove('hidden');
-  $('btn-qr').onclick = async () => {
-    const text = await scanQr();
-    if (text) openCode(parseTagText(text));
-  };
+  if (ref.settings?.nfcEnabled && nfcSupported()) $('btn-nfc').classList.remove('hidden');
+  $('btn-qr').onclick = async () => { const text = await scanQr(); if (text) openCode(text); };
   $('btn-nfc').onclick = onNfc;
-  $('manual-code').onsubmit = (e) => {
-    e.preventDefault();
-    const code = parseTagText(e.target.code.value);
-    if (code) openCode(code);
-  };
+  $('manual-code').onsubmit = (e) => { e.preventDefault(); const c = e.target.code.value.trim(); if (c) openCode(c); };
   $('btn-sync').onclick = () => syncNow({ manual: true });
-  $('btn-cancel').onclick = closeReading;
-  $('btn-loc-manual').onclick = () => showManualPicker(true);
-  $('btn-loc-change').onclick = () => showManualPicker(true);
-  $('loc-filter').oninput = fillLocationSelect;
-  $('loc-select').onchange = () => {
-    const v = $('loc-select').value;
-    setChosen(v === HERE.id ? HERE : ref.locations.find((l) => l.id === v) || null);
-    manualChoice = true;
-    $('loc-error').textContent = '';
-    $('loc-name').textContent = chosenLocation ? labelFor(chosenLocation) : '';
-    $('loc-status').textContent = 'Selected manually';
-    $('btn-loc-manual').classList.add('hidden');
-  };
-  $('reading-form').onsubmit = onSave;
-  $('pair-scan').onclick = async () => { const t = await scanQr(); if (t) pairWithCode(parseTagText(t)); };
-  $('pair-type').onclick = () => { const c = prompt('Code printed under the QR label:'); if (c) pairWithCode(parseTagText(c)); };
-  $('pair-skip').onclick = () => $('pair-dialog').close();
-  if (nfcSupported()) {
-    $('pair-nfc').classList.remove('hidden');
-    $('pair-nfc').onclick = async () => {
-      const ctrl = new AbortController();
-      setTimeout(() => ctrl.abort(), 30_000);
-      try {
-        const { code, serialCode } = await readNfc(ctrl.signal);
-        pairWithCode(findAsset(code) ? code : findAsset(serialCode) ? serialCode : code);
-      } catch (e) {
-        if (e.name !== 'AbortError') $('pair-error').textContent = e.message || 'NFC read failed';
-      }
-    };
-  }
+  $('btn-cancel').onclick = leaveFlow;
+  $('btn-back').onclick = back;
+  $('btn-problem').onclick = () => openProblem('label_mismatch');
+  $('problem-cancel').onclick = () => $('problem').close();
+  $('problem-send').onclick = sendProblem;
   window.addEventListener('at:outbox', renderOutbox);
   window.addEventListener('hashchange', openFromHash);
   openFromHash();
+  maybeTour();
+}
+
+const typeOf = (a) => typeById(ref.types, a.type_id);
+
+// ---------------------------------------------------------------- splash + first-time tour
+
+function showSplash() {
+  let seen = false;
+  try { seen = sessionStorage.getItem('at.splash') === '1'; sessionStorage.setItem('at.splash', '1'); } catch { /* ignore */ }
+  if (seen) return;
+  const el = $('splash');
+  el.classList.remove('hidden');
+  setTimeout(() => el.classList.add('hidden'), 1700);
+}
+
+const TOUR = [
+  ['Scan the QR label', 'Point the camera at the QR label on the generator or fuel cube. If the camera does not work, type the code printed under the label.'],
+  ['Confirm where you are', 'The phone finds the turbine with GPS. Tap Confirm, or Edit to pick the turbine or vessel yourself.'],
+  ['Answer a few questions', 'Alarms, fuel cube and fuel level, one question per screen. Then Save. Without signal everything is kept on the phone and sent automatically later.'],
+];
+
+function maybeTour() {
+  const key = `at.tour.${SLUG}`;
+  let seen = null;
+  try { seen = localStorage.getItem(key); } catch { /* ignore */ }
+  if (seen || location.hash.includes('t=')) return;
+  let i = 0;
+  const dlg = $('tour');
+  const show = () => {
+    $('tour-count').textContent = `${i + 1} of ${TOUR.length}`;
+    $('tour-title').textContent = TOUR[i][0];
+    $('tour-text').textContent = TOUR[i][1];
+    $('tour-next').textContent = i === TOUR.length - 1 ? 'Got it' : 'Next';
+  };
+  const done = () => { try { localStorage.setItem(key, '1'); } catch { /* ignore */ } dlg.close(); };
+  $('tour-next').onclick = () => { if (i === TOUR.length - 1) done(); else { i++; show(); } };
+  $('tour-skip').onclick = done;
+  show();
+  setTimeout(() => { if (!dlg.open) dlg.showModal(); }, 1800);
 }
 
 function showDataAge() {
   $('data-age').textContent = ref.fromCache
-    ? `Offline - using asset list saved ${ago(ref.serverTime)}.`
-    : `Asset list up to date (${ref.assets.length} assets, ${ref.locations.length} locations).`;
+    ? `Offline: using the equipment list saved ${ago(ref.serverTime)}.`
+    : `Equipment list up to date (${ref.assets.length} equipment, ${ref.locations.length} locations).`;
 }
 
 // ---------------------------------------------------------------- GPS
 
-// GPS is watched from page load so a fix is usually ready by the time the tag is scanned.
 function watchGps() {
-  if (!('geolocation' in navigator)) {
-    $('gps-warm').textContent = 'This device has no GPS - locations must be entered manually.';
-    return;
-  }
+  if (!('geolocation' in navigator)) { $('gps-warm').textContent = 'This device has no GPS: choose locations by hand.'; return; }
   navigator.geolocation.watchPosition(
     (p) => {
-      bestFix = { lat: p.coords.latitude, lon: p.coords.longitude, accuracy: p.coords.accuracy, timestamp: p.timestamp };
+      fix = { lat: p.coords.latitude, lon: p.coords.longitude, accuracy: p.coords.accuracy, timestamp: p.timestamp };
       $('gps-warm').textContent = `GPS ready (±${Math.round(p.coords.accuracy)} m).`;
-      if (current && !manualChoice && geoCheckOn()) applyResolution();
+      if (s && s.step === 'location' && !s.locManual && !s.editing) { autoPick(); render(); }
     },
     (err) => {
       $('gps-warm').textContent = err.code === err.PERMISSION_DENIED
-        ? 'Location permission denied - allow it in the browser settings, or enter locations manually.'
+        ? 'Location permission denied. Allow it in the browser settings, or choose locations by hand.'
         : 'Waiting for GPS…';
     },
     { enableHighAccuracy: true, maximumAge: 30_000, timeout: 30_000 },
   );
 }
 
-// Off while testing away from the wind farm (GEO_CHECK=off on the server).
-const geoCheckOn = () => ref?.settings?.geoCheck !== false;
-const LAST_LOCATION_KEY = 'at.lastLocation';
-
-/** Testing mode: no GPS lock or warnings; the user picks any location. */
-function applyTestMode() {
-  resolution = null;
-  const lastId = localStorage.getItem(LAST_LOCATION_KEY);
-  setChosen(ref.locations.find((l) => l.id === lastId) || null);
-  manualChoice = !!chosenLocation;
-  $('loc-box').className = 'loc-box';
-  $('loc-status').textContent = 'Location check off (testing)';
-  $('loc-name').textContent = chosenLocation ? labelFor(chosenLocation) : '';
-  $('loc-detail').textContent = 'GPS is not checked against the turbine positions. Select any location.';
-  $('btn-loc-change').classList.add('hidden');
-  $('btn-loc-manual').classList.add('hidden');
-  showManualPicker(false);
+function resolve() {
+  resolution = resolveLocation(fix, ref.locations, { mode: ref.settings?.geoMode || 'test', farmKm: ref.settings?.farmRadiusKm || 20 });
 }
 
-function applyResolution() {
-  resolution = resolveLocation(bestFix, ref.locations);
-  const box = $('loc-box');
-  const status = {
-    ok: 'GPS position',
-    poor_accuracy: 'Weak GPS signal',
-    no_fix: 'No GPS position',
-    implausible: 'Far from the wind farm',
-  }[resolution.gpsStatus];
-  $('loc-status').textContent = status;
-  $('loc-detail').textContent = resolution.reason;
-  if (!manualChoice) {
-    // Away from the farm, default to the phone's own position; the user can still pick any WTG / SOV.
-    setChosen(resolution.elsewhere && bestFix ? HERE : resolution.requiresManual ? null : resolution.suggestion);
-  }
-  if (resolution.gpsStatus === 'implausible') {
-    $('loc-detail').textContent = `${resolution.reason.split(' (')[0]}. Saved at the phone's GPS position - if you are offshore, GPS may be jammed: select the WTG / SOV.`;
-  }
-  box.className = `loc-box ${resolution.requiresManual && chosenLocation !== HERE ? 'warn' : 'ok'}`;
-  $('loc-name').textContent = chosenLocation ? labelFor(chosenLocation) : '';
-  $('btn-loc-change').classList.toggle('hidden', !chosenLocation);
-  $('btn-loc-manual').classList.toggle('hidden', !!chosenLocation);
-  if (resolution.requiresManual && chosenLocation !== HERE) showManualPicker(false);
-}
-
-/** Sets the location and hides questions whose answer is fixed there (fuel cube on the SOV). */
-function setChosen(loc) {
-  chosenLocation = loc;
-  if (!current) return;
-  const fixed = new Set(fixedAt(current.type.fields, loc?.kind).map((f) => f.key));
-  $('check-fields').querySelectorAll('[data-field]').forEach((el) => {
-    el.classList.toggle('hidden', fixed.has(el.dataset.field));
-  });
-  const notes = current.type.fields.filter((f) => fixed.has(f.key))
-    .map((f) => `${esc(f.label)}: <b>${f.sovValue ? 'Yes' : 'No'}</b>`);
-  $('fixed-note').innerHTML = notes.length ? `On the vessel: ${notes.join(' · ')}` : '';
-  $('fixed-note').classList.toggle('hidden', !notes.length);
-  // Scanning a fuel cube at a turbine: ask for its generator (once per reading).
-  if (current.pairing?.direction === 'reverse' && !current.prompted && !current.pair && loc?.kind === 'WTG') offerPair();
-  renderPairBox();
-}
-
-// ---------------------------------------------------------------- linking (generator <-> fuel cube)
-
-/**
- * Updates this phone's copy of where a unit is and what it is connected to, so
- * the next scan (even offline, even after the outbox has synced) knows it.
- */
-function rememberState(r) {
-  const a = ref.assets.find((x) => x.id === r.asset_id);
-  if (a && (!a.state || r.recorded_at >= a.state.at)) {
-    a.state = { location_id: r.location_id, linked_asset_id: r.linked_asset_id ?? null, at: r.recorded_at };
-  }
-}
-
-const typeOf = (a) => ref.types.find((t) => t.id === a.type_id) || { name: a.type_id, fields: [] };
-const partnerName = () => current.pairing.partnerType.name;
-
-/** Links the partner without asking when both are already known together here; otherwise asks to scan it. */
-function offerPair({ force = false } = {}) {
-  if (!current?.pairing) return;
-  current.prompted = true;
-  const locId = chosenLocation && chosenLocation !== HERE ? chosenLocation.id : null;
-  const partner = !force && current.asset && locId ? knownPartner(current.asset, locId, ref.assets, pending) : null;
-  if (partner && partner.type_id === current.pairing.partnerType.id) {
-    current.pair = { asset: partner, code: partner.tags[0]?.code ?? null, known: true };
-    renderPairBox();
-    return;
-  }
-  const forward = current.pairing.direction === 'forward';
-  const own = current.type.name.toLowerCase();
-  $('pair-title').textContent = `Scan the ${partnerName().toLowerCase()}`;
-  $('pair-text').textContent = forward
-    ? `Scan the QR label on the ${partnerName().toLowerCase()} connected to this ${own}.`
-    : `Is this ${own} connected to a ${partnerName().toLowerCase()}? Scan the ${partnerName().toLowerCase()}'s QR label.`;
-  $('pair-skip').textContent = forward ? 'Skip' : `Not connected to a ${partnerName().toLowerCase()}`;
-  $('pair-error').textContent = '';
-  if (!$('pair-dialog').open) $('pair-dialog').showModal();
-}
-
-function pairWithCode(code) {
-  if (!code) return;
-  const asset = findAsset(code);
-  const want = current.pairing.partnerType;
-  if (asset && asset.id === current.asset?.id) {
-    $('pair-error').textContent = `That is this ${current.type.name.toLowerCase()} itself. Scan the ${want.name.toLowerCase()}.`;
-    return;
-  }
-  if (asset && asset.type_id !== want.id) {
-    $('pair-error').textContent = `That label is on a ${typeOf(asset).name.toLowerCase()}. Scan the ${want.name.toLowerCase()}.`;
-    return;
-  }
-  current.pair = { asset, code, known: false };
-  $('pair-dialog').close();
-  if (navigator.vibrate) navigator.vibrate(80);
-  renderPairBox();
-}
-
-function renderPairBox() {
-  const box = $('pair-box');
-  const p = current?.pairing;
-  const fixed = p && p.direction === 'forward' && fixedAt(current.type.fields, chosenLocation?.kind).some((f) => f.key === p.field.key);
-  const answeredYes = p?.direction === 'forward' && $('check-fields').querySelector(`[name="${p.field.key}"][value="true"]:checked`);
-  const relevant = p && !fixed && (current.pair || answeredYes || (p.direction === 'reverse' && chosenLocation?.kind === 'WTG'));
-  box.classList.toggle('hidden', !relevant);
-  if (!relevant) return;
-  const pr = current.pair;
-  box.classList.toggle('ok', !!pr);
-  box.innerHTML = pr
-    ? `<div><b>${esc(pr.asset ? kindOf(pr.asset, typeOf(pr.asset)) : partnerName())}</b>${pr.code ? ` · tag ${esc(pr.code)}` : ''}
-        <div class="muted">${pr.known ? 'Already together here' : pr.asset ? 'Linked ✓' : 'Linked ✓ (not in the offline list yet)'}</div></div>
-       <button type="button" class="link-btn" id="pair-change">${pr.known ? 'Scan another' : 'Change'}</button>`
-    : `<div class="muted">Not linked to a ${esc(partnerName().toLowerCase())}.</div>
-       <button type="button" class="link-btn" id="pair-change">Scan ${esc(partnerName().toLowerCase())}</button>`;
-  $('pair-change').onclick = () => {
-    current.pair = null;
-    offerPair({ force: true });
-  };
-}
-
-function labelFor(l) {
-  if (l === HERE) return bestFix ? `Here (${bestFix.lat.toFixed(4)}, ${bestFix.lon.toFixed(4)})` : 'Here (GPS position)';
-  return l.kind === 'SOV' ? `${l.name} (vessel)` : l.name;
-}
-
-function showManualPicker(focus) {
-  $('loc-manual').classList.remove('hidden');
-  fillLocationSelect();
-  if (focus) $('loc-filter').focus();
-}
-
-function fillLocationSelect() {
-  const q = $('loc-filter').value.trim().toLowerCase().replace(/\s+/g, '');
-  const dist = new Map((resolution?.nearest || []).map((n) => [n.location.id, n.distanceM]));
-  const match = (l) => !q || l.name.toLowerCase().replace(/\s+/g, '').includes(q);
-  const sovs = ref.locations.filter((l) => l.kind === 'SOV' && match(l));
-  // Nearest turbines first when GPS gives a usable hint, else alphabetical.
-  const wtgs = ref.locations.filter((l) => l.kind === 'WTG' && match(l))
-    .sort((a, b) => (dist.get(a.id) ?? Infinity) - (dist.get(b.id) ?? Infinity) ||
-      a.name.localeCompare(b.name, undefined, { numeric: true }));
-  const opt = (l) => {
-    const d = dist.get(l.id);
-    const hint = d != null && resolution?.gpsStatus !== 'implausible' ? ` · ${d < 2000 ? `${Math.round(d)} m` : `${(d / 1000).toFixed(1)} km`}` : '';
-    return `<option value="${l.id}"${chosenLocation?.id === l.id ? ' selected' : ''}>${esc(l.name)}${hint}</option>`;
-  };
-  const here = bestFix && (!q || 'here gps elsewhere'.includes(q))
-    ? `<optgroup label="Elsewhere"><option value="${HERE.id}"${chosenLocation === HERE ? ' selected' : ''}>Here (phone GPS position)</option></optgroup>` : '';
-  $('loc-select').innerHTML = here +
-    (sovs.length ? `<optgroup label="Vessel (SOV)">${sovs.map(opt).join('')}</optgroup>` : '') +
-    (wtgs.length ? `<optgroup label="Turbines (WTG)">${wtgs.map(opt).join('')}</optgroup>` : '');
+/** Chooses the location the GPS suggests; leaves it empty when it must be chosen by hand. */
+function autoPick() {
+  resolve();
+  if (s.locManual) return;
+  if (resolution.elsewhere && fix && testMode()) s.loc = HERE;
+  else if (resolution.suggestion && (!resolution.requiresManual || resolution.gpsStatus === 'poor_accuracy')) s.loc = resolution.suggestion;
+  else s.loc = null;
 }
 
 // ---------------------------------------------------------------- identify
@@ -300,9 +148,7 @@ async function onNfc() {
   btn.onclick = () => ctrl.abort();
   try {
     const { code, serialCode } = await readNfc(ctrl.signal);
-    // Try the stored code first, then the chip serial (tags linked by serial only).
-    const known = findAsset(code) ? code : findAsset(serialCode) ? serialCode : code;
-    openCode(known);
+    openCode(findAsset(code) ? code : findAsset(serialCode) ? serialCode : code);
   } catch (e) {
     if (e.name !== 'AbortError') toast(e.message || 'NFC not available', 'error');
   } finally {
@@ -314,212 +160,534 @@ async function onNfc() {
 
 function openFromHash() {
   const code = new URLSearchParams(location.hash.slice(1)).get('t');
-  if (code) openCode(code);
+  if (code) { history.replaceState(null, '', location.pathname); openCode(code); }
 }
 
 function findAsset(code) {
   if (!code) return null;
-  const c = code.toLowerCase();
+  const c = String(code).toLowerCase();
   return ref.assets.find((a) => a.tags.some((t) => t.code.toLowerCase() === c)) ||
     ref.assets.find((a) => a.serial.toLowerCase() === c) || null;
 }
 
-async function openCode(code) {
+async function openCode(raw) {
+  const code = parseTagText(raw);
+  if (!code) return;
   let asset = findAsset(code);
   if (!asset && navigator.onLine !== false) {
-    // Linked after this phone's last refresh? Ask the server and refresh the cache.
+    // Registered after this phone's last refresh? Ask the server and refresh the copy.
     try {
-      asset = (await api(`/api/tags/${encodeURIComponent(code)}`)).asset;
+      await api(`/api/tags/${encodeURIComponent(code)}`);
       ref = await loadReference();
       showDataAge();
+      asset = findAsset(code);
     } catch (e) {
-      if (e.status === 404) {
-        if (can('link') && confirm(`Label ${code} is not linked to any equipment yet. Add the equipment now?`)) {
-          location.href = `/add#t=${encodeURIComponent(code)}`;
-          return;
-        }
-        if (!can('link')) toast(`Tag ${code} is not linked to any asset. Ask the warehouse supervisor to link it.`, 'error');
-        return;
-      }
+      if (e.status && e.status !== 404) toast(e.message, 'error');
     }
   }
-  if (!asset) {
-    // Offline and unknown: still allow recording; the server resolves the tag at sync.
-    const type = ref.types.length === 1 ? ref.types[0] : await pickType();
-    if (!type) return;
-    current = { asset: null, type, code };
-  } else {
-    const type = ref.types.find((t) => t.id === asset.type_id) || { id: asset.type_id, name: asset.type_id, fields: [] };
-    current = { asset, type, code };
-  }
-  showReading();
+  if (!asset) { openProblem('unknown_tag', code); return; }
+  startScan(asset, code);
 }
 
-/** e.g. "Generator 350 kVA": the type plus its fixed choices (the rating). */
-function kindOf(asset, type) {
-  const extras = type.fields.filter((f) => f.scope === 'asset' && f.type === 'select' && asset.attributes[f.key])
-    .map((f) => asset.attributes[f.key]);
-  return [type.name, ...extras].join(' ');
+// ---------------------------------------------------------------- the guided questions
+
+function startScan(asset, code) {
+  const type = typeOf(asset);
+  s = {
+    asset, type, code, loc: null, locManual: false, editing: false, locSource: 'gps',
+    answers: {}, pairing: pairingFor(ref.types, type), known: null,
+    partner: { status: 'none', asset: null, code: null }, partnerAnswer: null, sov: null, issues: [], step: null,
+  };
+  trail = [];
+  $('view-home').classList.add('hidden');
+  $('view-flow').classList.remove('hidden');
+  resolve();
+  autoPick();
+  clearTimeout(fixTimer);
+  // Give GPS a few seconds before asking for the location by hand.
+  if (!fix && 'geolocation' in navigator) fixTimer = setTimeout(() => { if (s?.step === 'location' && !s.loc) { autoPick(); render(); } }, 12_000);
+  go('location');
 }
 
-function pickType() {
-  const names = ref.types.map((t, i) => `${i + 1}. ${t.name}`).join('\n');
-  const n = Number(prompt(`Tag not in the offline list. What kind of equipment is it?\n${names}`, '1'));
-  return Promise.resolve(ref.types[n - 1] || null);
-}
-
-// ---------------------------------------------------------------- record
-
-function showReading() {
-  const { asset, type, code } = current;
-  manualChoice = false;
-  chosenLocation = null;
-  // Only what the technician needs: the kind with its rating, and the tag ID.
-  $('a-title').textContent = asset ? kindOf(asset, type) : type.name;
-  $('a-sub').textContent = `Tag ${code}`;
-  $('a-unknown').classList.toggle('hidden', !!asset);
-  $('a-unknown').textContent = 'This tag is not in the offline asset list. The reading will be matched to its asset when it syncs.';
-  current.pairing = pairingFor(ref.types, type);
-  current.pair = null;
-  current.prompted = false;
-  renderFields($('check-fields'), type.fields, 'check');
-  if (current.pairing?.direction === 'forward') {
-    // "Fuel cube connected: Yes" -> scan the fuel cube.
-    $('check-fields').querySelectorAll(`[name="${current.pairing.field.key}"]`).forEach((r) => {
-      r.addEventListener('change', () => {
-        if (r.value === 'true' && r.checked) offerPair();
-        else if (r.value === 'false' && r.checked) { current.pair = null; renderPairBox(); }
-      });
-    });
-  }
-  setChosen(null);
-  renderPairBox();
-  $('notes').value = '';
-  $('loc-filter').value = '';
-  $('loc-manual').classList.add('hidden');
-  $('loc-error').textContent = '';
-  $('scan-view').classList.add('hidden');
-  $('reading-view').classList.remove('hidden');
+function leaveFlow() {
+  clearTimeout(fixTimer);
+  s = null;
+  trail = [];
+  $('view-flow').classList.add('hidden');
+  $('view-home').classList.remove('hidden');
   window.scrollTo(0, 0);
-
-  clearTimeout(fixTimer);
-  if (!geoCheckOn()) {
-    applyTestMode();
-  } else if (bestFix || !('geolocation' in navigator)) {
-    applyResolution();
-  } else {
-    // The GPS watcher applies the fix as soon as it arrives; after a grace
-    // period without one, treat it as no fix (jamming) and ask for manual entry.
-    resolution = null;
-    $('loc-box').className = 'loc-box';
-    $('loc-status').textContent = 'Getting GPS position…';
-    $('loc-name').textContent = '';
-    $('loc-detail').textContent = '';
-    $('btn-loc-change').classList.add('hidden');
-    $('btn-loc-manual').classList.remove('hidden');
-    fixTimer = setTimeout(() => { if (current && !resolution) applyResolution(); }, 15_000);
-  }
 }
 
-function closeReading() {
-  current = null;
-  clearTimeout(fixTimer);
-  $('reading-view').classList.add('hidden');
-  $('scan-view').classList.remove('hidden');
-  if (location.hash) history.replaceState(null, '', location.pathname);
+const sovs = () => ref.locations.filter((l) => l.kind === 'SOV');
+const checkFields = () => s.type.fields.filter((f) => f.scope === 'check');
+const pairField = () => (s.pairing?.direction === 'forward' ? s.pairing.field : null);
+
+/** The steps this scan needs, from what is known so far. Recomputed after every answer. */
+function plan() {
+  const ids = ['location'];
+  const fields = checkFields();
+  const pf = pairField();
+  const fixedKeys = new Set(fixedAt(s.type.fields, s.loc?.kind).map((f) => f.key));
+  for (const f of fields.filter((x) => x.type === 'multiselect')) ids.push(`f:${f.key}`);
+  if (pf && s.loc && !fixedKeys.has(pf.key)) {
+    if (s.known) {
+      ids.push('cube-known');
+      if (s.partner.status === 'removed' && sovs().length > 1) ids.push('cube-sov');
+    } else {
+      ids.push('cube-ask');
+      if (s.partnerAnswer === true) ids.push('cube-scan');
+    }
+  } else if (s.pairing?.direction === 'reverse' && s.loc?.kind === 'WTG') {
+    if (s.known) ids.push('gen-known');
+    else { ids.push('gen-ask'); if (s.partnerAnswer === true) ids.push('gen-scan'); }
+  }
+  for (const f of fields.filter((x) => x.type === 'boolean' && x !== pf && !fixedKeys.has(x.key))) ids.push(`f:${f.key}`);
+  for (const f of fields.filter((x) => !['multiselect', 'boolean'].includes(x.type))) ids.push(`f:${f.key}`);
+  ids.push('summary');
+  return ids;
 }
 
-async function onSave(e) {
-  e.preventDefault();
-  const form = $('reading-form');
-  const raw = applyLocationRules(current.type.fields, collectFields(form, current.type.fields, 'check'), chosenLocation?.kind);
-  const { values, errors } = normalizeValues(current.type.fields, 'check', raw);
-  showErrors(form, errors);
-  if (!chosenLocation) {
-    $('loc-error').textContent = 'Select where the asset is.';
-    showManualPicker(true);
-    return;
-  }
-  if (Object.keys(errors).length) return;
+function refreshKnown() {
+  const wanted = s.pairing?.partnerType?.id;
+  const p = s.loc && s.loc !== HERE ? knownPartner(s.asset, s.loc.id, ref.assets, pending) : null;
+  s.known = p && p.type_id === wanted ? p : null;
+}
 
-  const fix = bestFix;
-  // In testing mode the GPS status is still recorded, it just never decided the location.
-  if (!geoCheckOn()) resolution = resolveLocation(fix, ref.locations);
-  const atHere = chosenLocation === HERE;
-  if (atHere && !fix) {
-    $('loc-error').textContent = 'No GPS position - select a WTG or vessel instead.';
-    return;
+function go(step, { isBack = false } = {}) {
+  if (!isBack && s.step) trail.push(s.step);
+  s.step = step;
+  render();
+  window.scrollTo(0, 0);
+}
+
+function advance() {
+  const p = plan();
+  const i = p.indexOf(s.step);
+  go(p[Math.min(p.length - 1, i + 1)]);
+}
+
+function back() {
+  if (s.step === 'location' && !s.editing) return leaveFlow();
+  const prev = trail.pop();
+  if (!prev) return leaveFlow();
+  if (prev === 'location') s.editing = false;
+  go(prev, { isBack: true });
+}
+
+function nav({ next = null, disabled = false, hideBack = false } = {}) {
+  $('btn-next').classList.toggle('hidden', !next);
+  $('btn-next').textContent = next || '';
+  $('btn-next').disabled = disabled;
+  $('btn-back').classList.toggle('hidden', hideBack);
+  $('nav').classList.toggle('single', !next || hideBack);
+}
+
+function render() {
+  const p = plan();
+  const i = Math.max(0, p.indexOf(s.step));
+  $('progress').innerHTML = p.map((_, n) => `<span class="${n <= i ? 'done' : ''}"></span>`).join('');
+  $('step-label').textContent = `${kindOf(s.asset, s.type)} · tag ${s.code}`;
+  $('btn-back').textContent = s.step === 'location' ? 'Cancel scan' : 'Back';
+  $('btn-next').onclick = null;
+  const [kind, key] = s.step.split(':');
+  (STEPS[kind] || STEPS.summary)(key);
+}
+
+// ---------------------------------------------------------------- steps
+
+const STEPS = {
+  location() {
+    refreshKnown();
+    if (!s.editing && s.loc) {
+      const warn = resolution?.requiresManual && s.loc !== HERE;
+      $('step').innerHTML = `<h1>Where are you?</h1>
+        <div class="loc-hero ${warn ? 'warn' : 'ok'}">
+          <div class="muted">${esc(locationStatus())}</div>
+          <div class="loc-name">${esc(locLabel(s.loc))}</div>
+          <div class="muted">${esc(resolution?.reason || '')}</div>
+        </div>
+        <button type="button" class="btn btn-primary btn-big" id="loc-confirm">Confirm</button>
+        <button type="button" class="btn btn-big" id="loc-edit" style="margin-top:10px">Edit</button>`;
+      $('loc-confirm').onclick = () => { s.locSource = s.loc === HERE || (!s.locManual && !resolution?.requiresManual) ? 'gps' : 'manual'; refreshKnown(); advance(); };
+      $('loc-edit').onclick = () => { s.editing = true; render(); };
+      nav({ hideBack: false });
+      return;
+    }
+    const waiting = !s.loc && !fix && 'geolocation' in navigator && !s.editing && !s.locManual && resolution?.gpsStatus === 'no_fix' && fixTimer;
+    $('step').innerHTML = `<h1>${s.editing ? 'Choose the location' : 'Where are you?'}</h1>
+      ${waiting ? '<p class="muted">Getting GPS position…</p>' : `<p class="muted">${esc(s.editing ? 'Select the turbine or vessel.' : resolution?.reason || 'Select the turbine or vessel.')}</p>`}
+      <div class="field"><input id="loc-filter" type="search" placeholder="Filter, e.g. A03" aria-label="Filter locations"></div>
+      <div class="pick-list" id="loc-list"></div>`;
+    $('loc-filter').oninput = fillPicker;
+    fillPicker();
+    nav({ hideBack: false });
+  },
+
+  f(key) {
+    const f = checkFields().find((x) => x.key === key);
+    const values = s.answers;
+    const forCube = s.pairing?.direction === 'forward' && ['known', 'scanned'].includes(s.partner.status);
+    const about = forCube ? s.pairing.partnerType.name.toLowerCase() : s.type.name.toLowerCase();
+    if (f.type === 'multiselect') {
+      const chosen = new Set(values[key] || []);
+      $('step').innerHTML = `<h1>${esc(f.label)}</h1><p class="muted">Tick every alarm that is active. Leave all unticked if there are none.</p>
+        <div class="toggle-list">${f.options.map((o) => `<button type="button" class="btn" data-o="${esc(o)}" aria-pressed="${chosen.has(o)}">${esc(o)}</button>`).join('')}</div>`;
+      $('step').querySelectorAll('[data-o]').forEach((b) => (b.onclick = () => {
+        const on = b.getAttribute('aria-pressed') !== 'true';
+        b.setAttribute('aria-pressed', String(on));
+        on ? chosen.add(b.dataset.o) : chosen.delete(b.dataset.o);
+        values[key] = [...chosen];
+        $('btn-next').textContent = chosen.size ? 'Next' : 'No alarms';
+      }));
+      nav({ next: chosen.size ? 'Next' : 'No alarms' });
+      $('btn-next').onclick = () => { values[key] = [...chosen]; advance(); };
+      return;
+    }
+    if (f.type === 'boolean') {
+      $('step').innerHTML = `<h1>${esc(f.label)}?</h1><div class="choice-list"><button type="button" class="btn" data-v="true">Yes</button><button type="button" class="btn" data-v="false">No</button></div>`;
+      $('step').querySelectorAll('[data-v]').forEach((b) => (b.onclick = () => { values[key] = b.dataset.v === 'true'; advance(); }));
+      nav({});
+      return;
+    }
+    const steps = f.type === 'number' && f.step && f.min != null && f.max != null ? Math.floor((f.max - f.min) / f.step) + 1 : 0;
+    if (steps >= 2 && steps <= 11) {
+      const choices = Array.from({ length: steps }, (_, n) => f.min + n * f.step);
+      const lowAt = f.alert?.atMost ?? (f.alert?.below != null ? f.alert.below - 1e-9 : null);
+      $('step').innerHTML = `<h1>${esc(f.label)}</h1><p class="muted">Read the level on the ${esc(about)}.</p>
+        <div class="gauge-list">${[...choices].reverse().map((c) => `<button type="button" class="gauge${lowAt != null && c <= lowAt ? ' low' : ''}" data-v="${c}"><b>${c}${f.unit === '%' ? ' %' : esc(f.unit ? ` ${f.unit}` : '')}</b><span class="muted">${c === f.max ? 'full' : c === f.min ? 'empty' : ''}</span>
+          <span class="bar"><span style="width:${((c - f.min) / (f.max - f.min)) * 100}%"></span></span></button>`).join('')}</div>`;
+      $('step').querySelectorAll('[data-v]').forEach((b) => (b.onclick = () => { values[key] = Number(b.dataset.v); advance(); }));
+      nav({});
+      return;
+    }
+    if (f.type === 'select') {
+      $('step').innerHTML = `<h1>${esc(f.label)}</h1><div class="choice-list">${f.options.map((o) => `<button type="button" class="btn" data-v="${esc(o)}">${esc(o)}</button>`).join('')}</div>`;
+      $('step').querySelectorAll('[data-v]').forEach((b) => (b.onclick = () => { values[key] = b.dataset.v; advance(); }));
+      nav({});
+      return;
+    }
+    const type = f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text';
+    $('step').innerHTML = `<h1>${esc(f.label)}${f.unit ? ` <span class="muted">(${esc(f.unit)})</span>` : ''}</h1>
+      <div class="field"><input id="in-field" class="big" type="${type}" inputmode="${f.type === 'number' ? 'decimal' : 'text'}" value="${esc(values[key] ?? '')}" aria-label="${esc(f.label)}"></div>
+      <div class="field-error" id="in-error"></div>`;
+    const go1 = () => {
+      const v = $('in-field').value;
+      const { errors } = normalizeValues([f], 'check', { [key]: v });
+      if (errors[key]) { $('in-error').textContent = errors[key]; return; }
+      values[key] = v;
+      advance();
+    };
+    nav({ next: 'Next' });
+    $('btn-next').onclick = go1;
+    $('in-field').onkeydown = (e) => { if (e.key === 'Enter') go1(); };
+    $('in-field').focus();
+  },
+
+  // ---- fuel cube, asked on the generator
+  'cube-known'() {
+    const p = s.known;
+    $('step').innerHTML = `<h1>Is the fuel cube still here?</h1>
+      <div class="partner-card"><b>${esc(partnerLabel(p))}</b><div class="muted">${p.tags[0] ? `tag ${esc(p.tags[0].code)}` : ''} · connected to this generator at ${esc(locLabel(s.loc))}</div></div>
+      <div class="choice-list"><button type="button" class="btn" id="cube-yes">Yes, it is connected</button><button type="button" class="btn" id="cube-no">No, it is not here</button></div>`;
+    $('cube-yes').onclick = () => { s.partner = { status: 'known', asset: p, code: p.tags[0]?.code ?? null }; s.answers[pairField().key] = true; advance(); };
+    $('cube-no').onclick = () => {
+      s.partner = { status: 'removed', asset: p, code: p.tags[0]?.code ?? null };
+      s.answers[pairField().key] = false;
+      if (sovs().length === 1) s.sov = sovs()[0];
+      advance();
+    };
+    nav({});
+  },
+
+  'cube-sov'() {
+    $('step').innerHTML = `<h1>Which vessel is it on?</h1><p class="muted">The fuel cube is moved back to the vessel.</p>
+      <div class="choice-list">${sovs().map((l) => `<button type="button" class="btn" data-id="${esc(l.id)}">${esc(l.name)}</button>`).join('')}</div>`;
+    $('step').querySelectorAll('[data-id]').forEach((b) => (b.onclick = () => { s.sov = sovs().find((l) => l.id === b.dataset.id); advance(); }));
+    nav({});
+  },
+
+  'cube-ask'() {
+    const pt = s.pairing.partnerType.name.toLowerCase();
+    $('step').innerHTML = `<h1>${esc(pairField().label)}?</h1><p class="muted">Is a ${esc(pt)} connected to this ${esc(s.type.name.toLowerCase())}?</p>
+      <div class="choice-list"><button type="button" class="btn" id="ask-yes">Yes</button><button type="button" class="btn" id="ask-no">No</button></div>`;
+    $('ask-yes').onclick = () => { s.partnerAnswer = true; s.answers[pairField().key] = true; advance(); };
+    $('ask-no').onclick = () => { s.partnerAnswer = false; s.partner = { status: 'none', asset: null, code: null }; s.answers[pairField().key] = false; advance(); };
+    nav({});
+  },
+
+  'cube-scan'() { partnerScan('forward'); },
+
+  // ---- generator, asked on the fuel cube
+  'gen-known'() {
+    const p = s.known;
+    $('step').innerHTML = `<h1>Still connected to this generator?</h1>
+      <div class="partner-card"><b>${esc(partnerLabel(p))}</b><div class="muted">${p.tags[0] ? `tag ${esc(p.tags[0].code)}` : ''}</div></div>
+      <div class="choice-list"><button type="button" class="btn" id="gen-yes">Yes, it is connected</button><button type="button" class="btn" id="gen-no">No, not connected</button></div>`;
+    $('gen-yes').onclick = () => { s.partner = { status: 'known', asset: p, code: p.tags[0]?.code ?? null }; advance(); };
+    $('gen-no').onclick = () => { s.partner = { status: 'none', asset: null, code: null }; advance(); };
+    nav({});
+  },
+
+  'gen-ask'() {
+    const pt = s.pairing.partnerType.name.toLowerCase();
+    $('step').innerHTML = `<h1>Connected to a ${esc(pt)}?</h1>
+      <div class="choice-list"><button type="button" class="btn" id="ask-yes">Yes, scan the ${esc(pt)}</button><button type="button" class="btn" id="ask-no">No</button></div>`;
+    $('ask-yes').onclick = () => { s.partnerAnswer = true; advance(); };
+    $('ask-no').onclick = () => { s.partnerAnswer = false; s.partner = { status: 'none', asset: null, code: null }; advance(); };
+    nav({});
+  },
+
+  'gen-scan'() { partnerScan('reverse'); },
+
+  summary() {
+    const { values } = collectValues();
+    const alerts = evaluateAlerts(s.type.fields, values);
+    const rows = [['Equipment', kindOf(s.asset, s.type)], ['Location', locLabel(s.loc)]];
+    for (const f of checkFields()) {
+      if (values[f.key] === undefined && f.type === 'multiselect') { rows.push([f.label, 'None']); continue; }
+      if (values[f.key] === undefined) continue;
+      rows.push([f.label, formatValue(f, values[f.key])]);
+    }
+    if (s.partner.status === 'known' || s.partner.status === 'scanned') rows.push([s.pairing.partnerType.name, partnerLabel(s.partner.asset)]);
+    if (s.partner.status === 'removed') rows.push([s.pairing.partnerType.name, 'Not here: moved to the vessel']);
+    $('step').innerHTML = `<h1>Ready to save</h1>
+      ${alerts.length ? `<div class="notice notice-danger">${alerts.map((a) => `⚠ ${esc(a.text)}`).join('<br>')}</div>` : ''}
+      <dl style="margin:0">${rows.map(([k, v]) => `<div class="sum-row"><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>
+      <div class="field-error" id="save-error"></div>`;
+    nav({ next: 'Save' });
+    $('btn-next').onclick = save;
+  },
+};
+
+const locLabel = (l) => (l === HERE ? (fix ? `Here (${fix.lat.toFixed(4)}, ${fix.lon.toFixed(4)})` : 'Here (GPS position)') : l.kind === 'SOV' ? `${l.name} (vessel)` : l.name);
+const partnerLabel = (a) => (a ? kindOf(a, typeOf(a)) : s.pairing.partnerType.name);
+
+function locationStatus() {
+  if (s.loc === HERE) return 'Away from the wind farm (testing)';
+  return { ok: 'GPS position', poor_accuracy: 'Weak GPS signal', no_fix: 'No GPS position', implausible: 'GPS position not plausible' }[resolution?.gpsStatus] || 'Location';
+}
+
+function fillPicker() {
+  const q = $('loc-filter').value.trim().toLowerCase().replace(/\s+/g, '');
+  const dist = new Map((resolution?.nearest || []).map((n) => [n.location.id, n.distanceM]));
+  const match = (l) => !q || l.name.toLowerCase().replace(/\s+/g, '').includes(q);
+  const useDist = resolution && resolution.gpsStatus !== 'implausible' && resolution.gpsStatus !== 'no_fix';
+  const wtgs = ref.locations.filter((l) => l.kind === 'WTG' && match(l))
+    .sort((a, b) => (useDist ? (dist.get(a.id) ?? Infinity) - (dist.get(b.id) ?? Infinity) : 0) || a.name.localeCompare(b.name, undefined, { numeric: true }));
+  const item = (l) => {
+    const d = dist.get(l.id);
+    const hint = useDist && d != null ? (d < 2000 ? `${Math.round(d)} m` : `${(d / 1000).toFixed(1)} km`) : '';
+    return `<button type="button" class="btn" data-id="${esc(l.id)}"><span>${esc(l.name)}</span><span class="muted">${hint}</span></button>`;
+  };
+  const group = (title, list) => (list.length ? `<div class="pick-group">${title}</div>${list.map(item).join('')}` : '');
+  const here = fix && testMode() && (!q || 'here gps'.includes(q))
+    ? `<div class="pick-group">Elsewhere (testing)</div><button type="button" class="btn" data-id="${HERE.id}"><span>Here (phone GPS position)</span></button>` : '';
+  $('loc-list').innerHTML = here + group('Vessel', sovs().filter(match)) + group('Turbines', wtgs) || '<p class="muted">No location found.</p>';
+  $('loc-list').querySelectorAll('[data-id]').forEach((b) => (b.onclick = () => {
+    s.loc = b.dataset.id === HERE.id ? HERE : ref.locations.find((l) => l.id === b.dataset.id);
+    s.locManual = true;
+    s.locSource = s.loc === HERE ? 'gps' : 'manual';
+    s.editing = false;
+    refreshKnown();
+    // A new location can change which questions apply.
+    if (s.partner.status === 'removed') s.partner = { status: 'none', asset: null, code: null };
+    advance();
+  }));
+}
+
+/** Scan the other unit (the fuel cube, or the generator). */
+function partnerScan(direction) {
+  const pt = s.pairing.partnerType;
+  const owner = s.partner.status === 'scanned' ? s.partner : null;
+  $('step').innerHTML = `<h1>Scan the ${esc(pt.name.toLowerCase())}</h1>
+    <p class="muted">${direction === 'forward' ? `Scan the QR label on the ${esc(pt.name.toLowerCase())} connected to this ${esc(s.type.name.toLowerCase())}.` : `Scan the QR label on the ${esc(pt.name.toLowerCase())} this ${esc(s.type.name.toLowerCase())} is connected to.`}</p>
+    ${owner ? `<div class="notice notice-ok">✓ ${esc(partnerLabel(owner.asset))}${owner.code ? ` · tag <b class="mono">${esc(owner.code)}</b>` : ''}</div>` : ''}
+    <div class="field-error" id="scan-error"></div>
+    <div class="stack">
+      <button type="button" class="btn ${owner ? '' : 'btn-primary'} btn-big" id="p-scan">${owner ? 'Scan again' : 'Scan QR code'}</button>
+      ${ref.settings?.nfcEnabled && nfcSupported() ? '<button type="button" class="btn btn-big" id="p-nfc">Or tap an NFC tag</button>' : ''}
+      <button type="button" class="link-btn" id="p-type">Type the code instead</button>
+      <button type="button" class="link-btn" id="p-skip">I cannot scan it</button>
+    </div>`;
+  const accept = (raw) => {
+    const code = parseTagText(raw);
+    if (!code) return;
+    const a = findAsset(code);
+    if (a && a.id === s.asset.id) { $('scan-error').textContent = `That is this ${s.type.name.toLowerCase()} itself. Scan the ${pt.name.toLowerCase()}.`; return; }
+    if (a && a.type_id !== pt.id) { $('scan-error').textContent = `That label is on a ${typeOf(a).name.toLowerCase()}. Scan the ${pt.name.toLowerCase()}.`; return; }
+    if (!a) { $('scan-error').textContent = 'That label is not registered in this project.'; return; }
+    s.partner = { status: 'scanned', asset: a, code };
+    s.issues = s.issues.filter((i) => i.issue_type !== 'cube_conflict');
+    // Another unit already linked to it at this very location: two claim the same one.
+    const st = a.state;
+    if (st?.linked_asset_id && st.linked_asset_id !== s.asset.id && s.loc && s.loc !== HERE && st.location_id === s.loc.id) {
+      const other = ref.assets.find((x) => x.id === st.linked_asset_id);
+      if (other?.state?.linked_asset_id === a.id) {
+        const cube = direction === 'forward' ? a : s.asset;
+        const gen = direction === 'forward' ? s.asset : a;
+        s.issues.push({ issue_type: 'cube_conflict', asset_id: cube.id, related_asset_id: gen.id, note: `The app also has it connected to ${other.serial}.` });
+      }
+    }
+    if (navigator.vibrate) navigator.vibrate(80);
+    render();
+  };
+  $('p-scan').onclick = async () => { const t = await scanQr(); if (t) accept(t); };
+  $('p-type').onclick = () => { const c = prompt('Code printed under the QR label:'); if (c) accept(c); };
+  $('p-skip').onclick = () => { s.partner = { status: 'skipped', asset: null, code: null }; advance(); };
+  if ($('p-nfc')) {
+    $('p-nfc').onclick = async () => {
+      const ctrl = new AbortController();
+      setTimeout(() => ctrl.abort(), 30_000);
+      try { const { code, serialCode } = await readNfc(ctrl.signal); accept(findAsset(code) ? code : findAsset(serialCode) ? serialCode : code); }
+      catch (e) { if (e.name !== 'AbortError') $('scan-error').textContent = e.message || 'NFC read failed'; }
+    };
   }
-  const usedGps = atHere || (geoCheckOn() && !manualChoice && resolution && !resolution.requiresManual);
-  if (!atHere) localStorage.setItem(LAST_LOCATION_KEY, chosenLocation.id);
-  const reading = {
-    id: crypto.randomUUID(),
-    asset_id: current.asset?.id ?? null,
-    tag_code: current.code,
-    recorded_at: new Date().toISOString(),
-    location_id: atHere ? null : chosenLocation.id,
-    location_source: usedGps ? 'gps' : 'manual',
+  nav({ next: owner ? 'Next' : null });
+  if (owner) $('btn-next').onclick = advance;
+}
+
+// ---------------------------------------------------------------- save
+
+/** Check values for this unit, with location rules (fuel cube never on the vessel) applied. */
+function collectValues() {
+  const raw = applyLocationRules(s.type.fields, s.answers, s.loc?.kind);
+  return normalizeValues(s.type.fields, 'check', raw);
+}
+
+function locFields() {
+  const atHere = s.loc === HERE;
+  return {
+    location_id: atHere ? null : s.loc.id,
+    location_source: s.locSource,
     gps_status: resolution?.gpsStatus ?? 'unavailable',
     lat: fix?.lat ?? null,
     lon: fix?.lon ?? null,
     accuracy_m: fix?.accuracy ?? null,
-    distance_m: fix && chosenLocation.kind === 'WTG' && chosenLocation.lat != null
-      ? Math.round(distanceM(fix.lat, fix.lon, chosenLocation.lat, chosenLocation.lon)) : null,
-    data: values,
-    notes: $('notes').value.trim() || null,
-    device_id: deviceId(),
-    recorded_by: user.name,
-    // Local-only display label; stripped before upload.
-    label: `${current.asset ? kindOf(current.asset, current.type) : current.type.name} · tag ${current.code} @ ${atHere ? labelFor(HERE) : chosenLocation.name}`,
+    distance_m: fix && s.loc.kind === 'WTG' && s.loc.lat != null ? Math.round(distanceM(fix.lat, fix.lon, s.loc.lat, s.loc.lon)) : null,
   };
-  // Link to the scanned/known partner (only when the forward question was answered Yes).
-  const p = current.pairing;
-  const linkOn = p && current.pair && (p.direction === 'reverse' || values[p.field.key] === true);
-  if (linkOn) {
-    reading.linked_asset_id = current.pair.asset?.id ?? null;
-    reading.linked_tag_code = current.pair.code;
+}
+
+const item = (extra) => ({ id: crypto.randomUUID(), recorded_at: new Date().toISOString(), project: SLUG, ...extra });
+
+async function save() {
+  const { values, errors } = collectValues();
+  if (Object.keys(errors).length) {
+    $('save-error').textContent = Object.values(errors).join('. ');
+    return;
   }
-  await outbox.put(reading);
-  rememberState(reading);
-  if (linkOn && current.pair.asset && !current.pair.known) {
-    // The partner is now at the same place, connected to this unit.
-    const pa = current.pair.asset;
-    const partnerReading = {
-      ...reading,
-      id: crypto.randomUUID(),
-      asset_id: pa.id,
-      tag_code: current.pair.code,
-      kind: 'move',
-      data: {},
-      notes: null,
-      linked_asset_id: current.asset?.id ?? null,
-      linked_tag_code: current.code,
-      label: `${kindOf(pa, typeOf(pa))} · tag ${current.pair.code} @ ${atHere ? labelFor(HERE) : chosenLocation.name} (linked)`,
-    };
-    await outbox.put(partnerReading);
-    rememberState(partnerReading);
+  if (s.loc === HERE && !fix) { $('save-error').textContent = 'No GPS position. Go back and choose a turbine or vessel.'; return; }
+  const place = locFields();
+  const where = locLabel(s.loc);
+  const items = [];
+  const main = item({
+    kind: 'check', asset_id: s.asset.id, tag_code: s.code, ...place, data: values,
+    label: `${kindOf(s.asset, s.type)} · tag ${s.code} @ ${where}`,
+  });
+  items.push(main);
+
+  const partner = s.partner;
+  const pt = s.pairing?.partnerType;
+  if (s.pairing?.direction === 'forward' && (partner.status === 'known' || partner.status === 'scanned')) {
+    // The fuel cube is here, connected to this generator, at the level just entered.
+    main.linked_asset_id = partner.asset?.id ?? null;
+    main.linked_tag_code = partner.code;
+    const cubeKeys = new Set(pt.fields.filter((f) => f.scope === 'check').map((f) => f.key));
+    items.push(item({
+      kind: 'check', asset_id: partner.asset?.id ?? null, tag_code: partner.code, ...place,
+      data: Object.fromEntries(Object.entries(values).filter(([k]) => cubeKeys.has(k))),
+      linked_asset_id: s.asset.id, linked_tag_code: s.code,
+      label: `${partnerLabel(partner.asset)} · tag ${partner.code} @ ${where} (with generator)`,
+    }));
+  } else if (s.pairing?.direction === 'forward' && partner.status === 'removed') {
+    // Reported not here: the fuel cube goes back to the vessel without a reading, and the
+    // warehouse supervisor is told, because the app expected it here.
+    if (s.sov) {
+      items.push(item({
+        kind: 'move', asset_id: partner.asset.id, tag_code: partner.code, location_id: s.sov.id, location_source: 'manual', gps_status: 'unavailable',
+        label: `${partnerLabel(partner.asset)} · tag ${partner.code} moved to ${s.sov.name}`,
+      }));
+    }
+    s.issues.push({ issue_type: 'cube_missing', asset_id: partner.asset.id, related_asset_id: s.asset.id });
+  } else if (s.pairing?.direction === 'reverse' && (partner.status === 'known' || partner.status === 'scanned')) {
+    main.linked_asset_id = partner.asset?.id ?? null;
+    main.linked_tag_code = partner.code;
+    if (partner.status === 'scanned') {
+      // The generator is now known to be here, connected to this fuel cube.
+      items.push(item({
+        kind: 'move', asset_id: partner.asset?.id ?? null, tag_code: partner.code, ...place, linked_asset_id: s.asset.id, linked_tag_code: s.code,
+        label: `${partnerLabel(partner.asset)} · tag ${partner.code} @ ${where} (with fuel cube)`,
+      }));
+    }
   }
-  cache.set('bootstrap', ref).catch(() => {});
-  const alerts = evaluateAlerts(current.type.fields, values);
-  toast(alerts.length ? `Saved - alert: ${alerts.map((a) => a.text).join('; ')}` : 'Reading saved', alerts.length ? 'error' : 'ok');
-  closeReading();
+  for (const i of s.issues) {
+    items.push(item({ kind: 'issue', location_id: s.loc === HERE ? null : s.loc.id, tag_code: s.code, ...i, label: `To investigate: ${i.issue_type.replace('_', ' ')}` }));
+  }
+
+  for (const it of items) {
+    await outbox.put(it);
+    if (it.asset_id && (it.kind === 'check' || it.kind === 'move')) rememberState(it);
+  }
+  cache.set(`bootstrap:${SLUG}`, ref).catch(() => {});
+  const alerts = evaluateAlerts(s.type.fields, values);
+  toast(alerts.length ? `Saved. Warning: ${alerts.map((a) => a.text).join('; ')}` : 'Saved', alerts.length ? 'error' : 'ok');
+  leaveFlow();
   renderOutbox();
   updateSyncPill();
   if (navigator.onLine !== false) syncNow();
 }
 
+/** Keeps this phone's copy of where a unit is and what it is connected to up to date. */
+function rememberState(r) {
+  const a = ref.assets.find((x) => x.id === r.asset_id);
+  if (a && (!a.state || r.recorded_at >= a.state.at)) {
+    a.state = { location_id: r.location_id, linked_asset_id: r.linked_asset_id ?? null, at: r.recorded_at };
+  }
+}
+
+// ---------------------------------------------------------------- reporting a problem
+
+let problemKind = 'label_mismatch';
+let problemCode = null;
+
+function openProblem(kind, code = null) {
+  problemKind = kind;
+  problemCode = code || s?.code || null;
+  const unknown = kind === 'unknown_tag';
+  $('problem-title').textContent = unknown ? 'This label is not registered' : 'Something is wrong';
+  $('problem-text').textContent = unknown
+    ? `Label ${problemCode} is not linked to any equipment in this project. Add the equipment, or tell the warehouse supervisor.`
+    : 'The label does not match the equipment, the serial number is different, or something else is not right. The warehouse supervisor will look into it.';
+  $('problem-note').value = '';
+  $('problem-add').classList.toggle('hidden', !unknown);
+  $('problem-add').href = `${path('add')}#t=${encodeURIComponent(problemCode || '')}`;
+  $('problem').showModal();
+}
+
+async function sendProblem() {
+  const note = $('problem-note').value.trim() || null;
+  await outbox.put(item({
+    kind: 'issue', issue_type: problemKind, asset_id: s?.asset?.id ?? null, tag_code: problemCode,
+    location_id: s?.loc && s.loc !== HERE ? s.loc.id : null, note, label: `To investigate: ${problemKind.replace('_', ' ')} ${problemCode || ''}`,
+  }));
+  $('problem').close();
+  toast('The warehouse supervisor will be told', 'ok');
+  if (s) leaveFlow();
+  renderOutbox();
+  updateSyncPill();
+  if (navigator.onLine !== false) syncNow();
+}
+
+// ---------------------------------------------------------------- outbox list
+
 async function renderOutbox() {
   const items = (await outbox.all()).sort((a, b) => a.recorded_at.localeCompare(b.recorded_at));
   pending = items;
   const box = $('outbox');
-  if (!items.length) {
-    box.textContent = 'Nothing queued - all readings are on the server.';
-    return;
-  }
+  if (!items.length) { box.textContent = 'Nothing queued. Everything is on the server.'; return; }
   box.innerHTML = items.map((i) => `
     <div class="outbox-item">
       <div>
-        <div>${esc(i.label || i.tag_code)}</div>
+        <div>${esc(i.label || i.tag_code || i.kind)}</div>
         <div class="muted">${new Date(i.recorded_at).toLocaleString()}</div>
         ${i.rejected ? `<div class="field-error">Rejected: ${esc(i.error)}</div>` : ''}
       </div>
@@ -529,7 +697,7 @@ async function renderOutbox() {
     </div>`).join('');
   box.querySelectorAll('[data-discard]').forEach((b) => {
     b.onclick = async () => {
-      if (!confirm('Discard this reading? It will not be sent to the server.')) return;
+      if (!confirm('Discard this item? It will not be sent to the server.')) return;
       await outbox.remove([b.dataset.discard]);
       renderOutbox();
       updateSyncPill();

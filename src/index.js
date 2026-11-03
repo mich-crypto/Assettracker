@@ -69,6 +69,12 @@ const PROJECT_PAGES = { '/': '/project', '/field': '/field', '/add': '/add', '/w
 async function handleProjectPath(request, env, slug, rest) {
   const project = await env.DB.prepare('SELECT slug, name, status FROM projects WHERE slug = ?').bind(slug).first();
   if (!project) return notFoundPage(env, request);
+  // One canonical spelling (/BLP), so /blp and /BLP share the same offline data on a phone.
+  if (slug !== project.slug) {
+    const to = new URL(request.url);
+    to.pathname = `/${project.slug}${rest === '/' ? '' : rest}`;
+    return Response.redirect(to.toString(), 301);
+  }
   if (rest === '/manifest.webmanifest') {
     return json({
       name: project.name,

@@ -5,21 +5,25 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Scan · AssetTracker</title>
   <meta name="theme-color" content="#0b5cad">
-  <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/icons/icon.svg">
   <link rel="stylesheet" href="/css/app.css">
 </head>
 <body>
+  <div class="splash hidden" id="splash" aria-hidden="true">
+    <svg viewBox="0 0 64 64" width="96" height="96"><rect width="64" height="64" rx="14" fill="#0b5cad"/><g fill="#fff"><rect class="sq s1" x="12" y="12" width="16" height="16" rx="2"/><rect class="sq s2" x="36" y="12" width="16" height="16" rx="2"/><rect class="sq s3" x="12" y="36" width="16" height="16" rx="2"/></g><g fill="#0b5cad"><rect x="17" y="17" width="6" height="6"/><rect x="41" y="17" width="6" height="6"/><rect x="17" y="41" width="6" height="6"/></g><path class="bolt" d="M45 34l-7 11h6l-2 9 8-12h-6z" fill="#ffd24a"/></svg>
+    <div class="splash-name">Asset<b>Tracker</b></div>
+  </div>
+
   <main class="narrow">
-    <!-- Step 1: identify the asset -->
-    <section id="scan-view">
+    <!-- start: scan something -->
+    <section id="view-home">
       <div class="card stack">
-        <h1>Scan asset</h1>
+        <h1>Scan equipment</h1>
         <button class="btn btn-primary btn-big" id="btn-qr" type="button">Scan QR code</button>
         <button class="btn btn-big hidden" id="btn-nfc" type="button">Read NFC tag</button>
         <form id="manual-code" class="row">
-          <input class="grow" name="code" type="text" placeholder="…or type tag code / serial" autocapitalize="characters" aria-label="Tag code or serial number">
+          <input class="grow" name="code" type="text" placeholder="…or type the label code" autocapitalize="characters" autocomplete="off" aria-label="Label code">
           <button class="btn" type="submit">Go</button>
         </form>
         <p class="muted" id="gps-warm" aria-live="polite"></p>
@@ -31,61 +35,40 @@
       <p class="muted" id="data-age"></p>
     </section>
 
-    <!-- Step 2: record the reading -->
-    <section id="reading-view" class="hidden">
-      <form id="reading-form" novalidate>
-        <div class="card">
-          <div class="asset-head">
-            <div><h2 id="a-title"></h2><div class="muted" id="a-sub"></div></div>
-            <button type="button" class="link-btn" id="btn-cancel">Cancel</button>
-          </div>
-          <div id="a-unknown" class="notice notice-warn hidden" style="margin-top:10px"></div>
-        </div>
-
-        <div class="card">
-          <h3>Location</h3>
-          <div class="loc-box" id="loc-box">
-            <div class="muted" id="loc-status">Getting GPS position…</div>
-            <div class="loc-name" id="loc-name"></div>
-            <div class="muted" id="loc-detail"></div>
-            <button type="button" class="link-btn hidden" id="btn-loc-change">Change location</button>
-            <button type="button" class="link-btn" id="btn-loc-manual">Enter manually</button>
-          </div>
-          <div id="loc-manual" class="hidden">
-            <div class="field">
-              <label for="loc-filter">Select location <span class="req">*</span></label>
-              <input id="loc-filter" type="search" placeholder="Filter, e.g. WTG 12 or vessel name">
-            </div>
-            <div class="field">
-              <select id="loc-select" size="6" aria-label="Location"></select>
-              <div class="field-error" id="loc-error"></div>
-            </div>
-          </div>
-        </div>
-
-        <div class="card">
-          <h3>Check</h3>
-          <p class="notice notice-ok hidden" id="fixed-note"></p>
-          <div class="pair-box hidden" id="pair-box"></div>
-          <div id="check-fields"></div>
-          <div class="field"><label for="notes">Notes</label><textarea id="notes" name="__notes" placeholder="Optional"></textarea></div>
-        </div>
-        <button class="btn btn-primary btn-big" type="submit" id="btn-save">Save reading</button>
-        <p class="muted" style="text-align:center">Saved on this phone first, then synced when there is a connection.</p>
-      </form>
+    <!-- the guided questions -->
+    <section class="hidden" id="view-flow">
+      <div class="wizard-progress" id="progress" aria-hidden="true"></div>
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <p class="muted wizard-step-label" id="step-label" style="margin:0"></p>
+        <button class="link-btn" type="button" id="btn-cancel">Cancel</button>
+      </div>
+      <section class="card wizard" id="step" aria-live="polite"></section>
+      <div class="wizard-nav" id="nav">
+        <button type="button" class="btn" id="btn-back">Back</button>
+        <button type="button" class="btn btn-primary" id="btn-next">Next</button>
+      </div>
+      <p class="center"><button class="link-btn" type="button" id="btn-problem">Something is wrong with this equipment or label</button></p>
     </section>
   </main>
-  <dialog id="pair-dialog" class="pair-dialog" aria-labelledby="pair-title">
-    <h2 id="pair-title"></h2>
-    <p id="pair-text"></p>
-    <div class="field-error" id="pair-error"></div>
+
+  <dialog id="tour" class="pair-dialog" aria-labelledby="tour-title">
+    <p class="muted" id="tour-count"></p>
+    <h2 id="tour-title"></h2>
+    <p id="tour-text"></p>
+    <div class="row"><button class="btn btn-primary" type="button" id="tour-next">Next</button><button class="link-btn" type="button" id="tour-skip">Skip</button></div>
+  </dialog>
+
+  <dialog id="problem" class="pair-dialog" aria-labelledby="problem-title">
+    <h2 id="problem-title"></h2>
+    <p id="problem-text"></p>
+    <div class="field"><label for="problem-note">What did you see? <span class="muted">(optional)</span></label><textarea id="problem-note" maxlength="500" placeholder="e.g. serial on the nameplate is 120045"></textarea></div>
     <div class="stack">
-      <button type="button" class="btn btn-primary btn-big" id="pair-scan">Scan QR code</button>
-      <button type="button" class="btn btn-big hidden" id="pair-nfc">Tap NFC tag</button>
-      <button type="button" class="link-btn" id="pair-type">Type the code instead</button>
-      <button type="button" class="btn" id="pair-skip"></button>
+      <button type="button" class="btn btn-primary btn-big" id="problem-send">Tell the warehouse supervisor</button>
+      <a class="btn btn-big hidden" id="problem-add" href="#">Add this equipment now</a>
+      <button type="button" class="btn" id="problem-cancel">Cancel</button>
     </div>
   </dialog>
+
   <script src="/vendor/jsQR.js" defer></script>
   <script type="module" src="/js/field.js"></script>
 </body>

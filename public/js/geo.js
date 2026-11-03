@@ -4,7 +4,8 @@
 
 export const DEFAULTS = {
   maxAccuracyM: 150,      // fixes worse than this are treated as unreliable
-  farmKm: 30,             // further than this from every WTG => not at the wind farm (shore, train, port)
+  farmKm: 20,             // further than this from every WTG => not at the wind farm (shore, train, port); a project setting
+  mode: 'test',           // 'test': anywhere is accepted (phone position); 'live': outside the farm the location is chosen by hand
   implausibleKm: 150,     // further than this from every WTG => likely jamming/spoofing
   maxFixAgeMs: 2 * 60 * 1000,
 };
@@ -70,7 +71,7 @@ export function resolveLocation(fix, locations, opts = {}) {
   if (nearest.length && nearest[0].distanceM > o.implausibleKm * 1000) {
     return result('implausible', {
       nearest,
-      elsewhere: true,
+      elsewhere: o.mode !== 'live',
       reason: `GPS position is ${Math.round(nearest[0].distanceM / 1000)} km from the nearest WTG (possible jamming/spoofing). Select the location manually.`,
     });
   }
@@ -96,12 +97,21 @@ export function resolveLocation(fix, locations, opts = {}) {
     });
   }
 
-  // Well away from the farm (on shore, in a train): the phone's position is the location.
+  // Well away from the farm (on shore, in a train).
   if (nearest.length && nearest[0].distanceM > o.farmKm * 1000) {
+    // Live: outside the wind farm area the location must be chosen by hand (e.g. the SOV in port).
+    if (o.mode === 'live') {
+      return {
+        ...result('ok', { nearest }),
+        requiresManual: true,
+        reason: `You are outside the wind farm area (${Math.round(nearest[0].distanceM / 1000)} km from the nearest WTG). Select the location.`,
+      };
+    }
+    // Testing: the phone's position is the location.
     return result('ok', {
       nearest,
       elsewhere: true,
-      reason: `Not at the wind farm (${Math.round(nearest[0].distanceM / 1000)} km from the nearest WTG). Saved at the phone's GPS position.`,
+      reason: `Not at the wind farm (${Math.round(nearest[0].distanceM / 1000)} km from the nearest WTG). Saved at the phone's GPS position (testing).`,
     });
   }
 

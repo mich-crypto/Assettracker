@@ -2,8 +2,6 @@
 // (explained the first time), and the three entry points.
 import { SLUG, api, path, registerServiceWorker, requireProject, warmPages } from './app.js';
 
-if (requireProject()) init();
-
 const $ = (id) => document.getElementById(id);
 const KEY = `at.install.${SLUG}`;
 const ua = navigator.userAgent;
@@ -67,3 +65,5 @@ async function init() {
   // Make the other pages available offline from the first visit.
   setTimeout(warmPages, 1500);
 }
+
+if (requireProject()) init();

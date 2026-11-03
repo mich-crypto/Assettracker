@@ -81,3 +81,25 @@ test('implausibly far fix is also flagged elsewhere so it can be kept if intende
   assert.equal(r.gpsStatus, 'implausible');
   assert.equal(r.elsewhere, true);
 });
+
+test('live mode: outside the wind farm the location must be chosen by hand, never "here"', () => {
+  const coast = resolveLocation(fix(53.6, 6.6), locations, { now, mode: 'live' });     // ~58 km away
+  assert.equal(coast.requiresManual, true);
+  assert.equal(coast.elsewhere, false);
+  assert.equal(coast.suggestion, null);
+  assert.match(coast.reason, /outside the wind farm area/);
+  const far = resolveLocation(fix(48.85, 2.35), locations, { now, mode: 'live' });
+  assert.equal(far.requiresManual, true);
+  assert.equal(far.elsewhere, false);
+});
+
+test('live mode keeps normal behaviour at a turbine and on the vessel', () => {
+  assert.equal(resolveLocation(fix(54.001, 6.0), locations, { now, mode: 'live' }).suggestion.id, 'a01');
+  assert.equal(resolveLocation(fix(54.05, 6.1), locations, { now, mode: 'live' }).suggestion.id, 'sov'); // inside the farm area, not at a WTG
+});
+
+test('the farm area is a setting', () => {
+  const near = fix(54.12, 6.0); // ~13 km north of A01
+  assert.equal(resolveLocation(near, locations, { now, farmKm: 20, mode: 'live' }).suggestion.id, 'sov');
+  assert.equal(resolveLocation(near, locations, { now, farmKm: 10, mode: 'live' }).requiresManual, true);
+});

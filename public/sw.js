@@ -3,11 +3,12 @@
 // are never cached here. Pages are cached the first time they are opened (and
 // the project home page warms the rest), because their addresses contain the
 // project link (/BLP/field).
-const VERSION = 'v4';
+const VERSION = 'v5';
 const STATIC = [
   '/', '/icons/icon.svg', '/icons/icon-maskable.svg', '/css/app.css',
-  '/js/app.js', '/js/projects.js', '/js/store.js', '/js/fields.js', '/js/geo.js', '/js/forms.js', '/js/scan.js', '/js/pairing.js',
-  '/js/field.js', '/js/add.js', '/js/warehouse.js', '/js/overview.js', '/js/project.js',
+  '/js/app.js', '/js/projects.js', '/js/store.js', '/js/fields.js', '/js/geo.js', '/js/forms.js', '/js/scan.js',
+  '/js/pairing.js', '/js/equipment.js', '/js/reports.js', '/js/coords.js', '/js/importer.js', '/js/print.js',
+  '/js/project.js', '/js/field.js', '/js/add.js', '/js/warehouse.js', '/js/overview.js',
   '/vendor/jsQR.js', '/vendor/qrcode.js', '/vendor/leaflet/leaflet.js', '/vendor/leaflet/leaflet.css',
 ];
 
