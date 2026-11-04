@@ -18,12 +18,21 @@ export function levelField(type) {
   return nums.find((f) => /fuel/i.test(f.key)) || nums.find((f) => f.unit === '%') || null;
 }
 
-/** The latest check values; a service recorded after the last scan clears its alarms. */
+/**
+ * The latest check values, corrected for what the warehouse did after that scan: a service clears
+ * the alarms, a refuel clears a "low fuel" alarm.
+ */
 export function effectiveCheck(asset, type) {
   const c = asset.check;
-  if (!c || !asset.serviced_at || asset.serviced_at <= c.recorded_at) return c;
+  if (!c) return c;
+  const serviced = asset.serviced_at && asset.serviced_at >= c.recorded_at;
+  const refuelled = asset.refueled_at && asset.refueled_at >= c.recorded_at;
+  if (!serviced && !refuelled) return c;
   const data = { ...c.data };
-  for (const f of type.fields) if (f.scope === 'check' && f.type === 'multiselect') data[f.key] = [];
+  for (const f of type.fields) {
+    if (f.scope !== 'check' || f.type !== 'multiselect' || !Array.isArray(data[f.key])) continue;
+    data[f.key] = serviced ? [] : data[f.key].filter((v) => !/fuel/i.test(v));
+  }
   return { ...c, data };
 }
 

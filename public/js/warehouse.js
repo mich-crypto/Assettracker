@@ -7,7 +7,7 @@ import {
 } from './app.js';
 import { showInstallGuide } from './install.js';
 import { kindOf, typeById } from './equipment.js';
-import { applyFilters, enrich as enrichUnit, fuelCell, initToolbar, rowClass, statusCell } from './equipment-list.js';
+import { applyFilters, enrich as enrichUnit, fuelCell, groupPairs, initToolbar, kindLine, rowClass, statusCell } from './equipment-list.js';
 import { collectFields, renderFields, showErrors } from './forms.js';
 import { normalizeValues } from './fields.js';
 import { buildTemplate, parseAssetRows } from './importer.js';
@@ -196,8 +196,8 @@ function renderList() {
   $('rows-sov').innerHTML = applyFilters(onSov, barSov.state()).map((a) => row(a,
     `<td><b>${esc(a.kind)}</b></td><td class="mono">${esc(a.serial)}</td><td>${fuelCell(a)}</td><td>${statusCell(a)}</td>`)).join('')
     || `<tr><td colspan="4" class="muted">${onSov.length ? 'Nothing matches.' : 'Nothing on the SOV.'}</td></tr>`;
-  $('rows-wtg').innerHTML = applyFilters(onWtg, barWtg.state()).map((a) => row(a,
-    `<td class="wtg-name">${esc(a.last.location_name)}</td><td><b>${esc(a.kind)}</b></td><td class="mono">${esc(a.serial)}</td><td>${fuelCell(a)}</td><td>${statusCell(a)}</td>`)).join('')
+  $('rows-wtg').innerHTML = applyFilters(groupPairs(onWtg), barWtg.state()).map((a) => row(a,
+    `<td class="wtg-name">${esc(a.last.location_name)}</td><td><b>${kindLine(a)}</b></td><td class="mono">${esc(a.serial)}${a.partner ? `<div class="muted">${esc(a.partner.serial)}</div>` : ''}</td><td>${fuelCell(a)}</td><td>${statusCell(a)}</td>`)).join('')
     || `<tr><td colspan="5" class="muted">${onWtg.length ? 'Nothing matches.' : 'Nothing on turbines.'}</td></tr>`;
   $('card-none').classList.toggle('hidden', !none.length);
   $('rows-none').innerHTML = none.map((a) => row(a, `<td><b>${esc(a.kind)}</b></td><td class="mono">${esc(a.serial)}</td><td>${label(a)}</td><td>${statusCell(a)}</td>`)).join('');

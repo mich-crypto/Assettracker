@@ -2,7 +2,7 @@
 -- Not applied by migrations. Needs migration 0013 (hybrid generator). Delete a project in Admin when done.
 
 -- ===== Demo Bravo Offshore (/DEMOB) =====
-INSERT OR IGNORE INTO projects (id, slug, name, client, contact_email, geo_mode, billing_enabled, billing_start, billing_startup_cents, billing_monthly_cents, billing_company, billing_address, billing_email, billing_reference) VALUES ('proj-demob', 'DEMOB', 'Demo Bravo Offshore', 'Vestas', 'contact@demob.example', 'live', 1, date('now','-40 days'), 250000, 85000, 'Vestas Wind GmbH', 'Windpark Allee 1
+INSERT OR IGNORE INTO projects (id, slug, name, client, contact_email, geo_mode, billing_enabled, billing_start, billing_startup_cents, billing_monthly_cents, billing_company, billing_address, billing_email, billing_reference) VALUES ('proj-demob', 'DEMOB', 'Demo Bravo Offshore', 'Vestas', 'contact@demob.example', 'live', 0, date('now','-40 days'), 250000, 85000, 'Vestas Wind GmbH', 'Windpark Allee 1
 20457 Hamburg', 'ap@demob.example', 'PO-DEMOB');
 INSERT OR IGNORE INTO asset_types (id, name, fields, active, project_id) SELECT 'demob-'||id, name, replace(fields, '"pairWith":"fuel-cube"', '"pairWith":"demob-fuel-cube"'), 1, 'proj-demob' FROM asset_types WHERE project_id IS NULL AND active = 1;
 INSERT OR IGNORE INTO locations (id, kind, name, lat, lon, radius_m, project_id) VALUES
@@ -50,7 +50,7 @@ INSERT OR IGNORE INTO readings (id, asset_id, recorded_at, location_id, location
 INSERT OR IGNORE INTO readings (id, asset_id, recorded_at, location_source, gps_status, data, notes, kind) VALUES ('demob-evt1', 'demob-hyb05', strftime('%Y-%m-%dT%H:%M:%fZ','now','-1400 minutes'), 'manual', 'unavailable', '{"event": "defect", "note": "Inverter fault, battery will not charge"}', NULL, 'event');
 
 -- ===== Demo Charlie Wind (/DEMOC) =====
-INSERT OR IGNORE INTO projects (id, slug, name, client, contact_email, geo_mode, billing_enabled, billing_start, billing_startup_cents, billing_monthly_cents, billing_company, billing_address, billing_email, billing_reference) VALUES ('proj-democ', 'DEMOC', 'Demo Charlie Wind', 'Vestas', 'contact@democ.example', 'test', 1, date('now','+20 days'), 250000, 85000, 'Vestas Wind GmbH', 'Windpark Allee 1
+INSERT OR IGNORE INTO projects (id, slug, name, client, contact_email, geo_mode, billing_enabled, billing_start, billing_startup_cents, billing_monthly_cents, billing_company, billing_address, billing_email, billing_reference) VALUES ('proj-democ', 'DEMOC', 'Demo Charlie Wind', 'Vestas', 'contact@democ.example', 'test', 0, date('now','+20 days'), 250000, 85000, 'Vestas Wind GmbH', 'Windpark Allee 1
 20457 Hamburg', 'ap@democ.example', 'PO-DEMOC');
 INSERT OR IGNORE INTO asset_types (id, name, fields, active, project_id) SELECT 'democ-'||id, name, replace(fields, '"pairWith":"fuel-cube"', '"pairWith":"democ-fuel-cube"'), 1, 'proj-democ' FROM asset_types WHERE project_id IS NULL AND active = 1;
 INSERT OR IGNORE INTO locations (id, kind, name, lat, lon, radius_m, project_id) VALUES

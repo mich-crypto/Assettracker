@@ -14,7 +14,7 @@ export function enrich(a, type) {
   // All levels (fuel, battery): [{ f, v }]. `fuel` stays the main level used for sorting.
   const levels = levelFields(type).map((lf) => ({ f: lf, v: c ? c.data[lf.key] ?? null : null }));
   const battery = levels.find((l) => /batter/i.test(l.f.key))?.v ?? null;
-  return { ...a, type, kind: kindOf(a, type), alerts, block, status: block ? 'blocked' : alerts.length ? 'warning' : 'ok', levelField: f, fuel: v, battery, levels };
+  return { ...a, type, kind: kindOf(a, type), kinds: [kindOf(a, type)], alerts, block, status: block ? 'blocked' : alerts.length ? 'warning' : 'ok', levelField: f, fuel: v, battery, levels };
 }
 
 function levelBar(a, { f, v }, label) {
@@ -40,6 +40,35 @@ export function statusCell(a) {
   }
   return '';
 }
+
+/**
+ * A generator and the fuel cube connected to it, at the same place, become one line:
+ * the generator with its cube. The line carries both units' status and the generator's levels.
+ */
+export function groupPairs(units) {
+  const byId = new Map(units.map((u) => [u.id, u]));
+  const used = new Set();
+  const out = [];
+  for (const a of units) {
+    if (used.has(a.id)) continue;
+    const pid = a.last?.linked_asset_id;
+    const p = pid && byId.get(pid);
+    const together = p && !used.has(p.id) && p.last?.linked_asset_id === a.id && p.last?.location_id && p.last.location_id === a.last.location_id;
+    if (!together) { out.push(a); continue; }
+    // The unit that has levels of its own to show (the generator) leads; the cube is the add-on.
+    const lead = a.levels.length >= p.levels.length && !(a.levels.length === p.levels.length && /cube/i.test(a.kind)) ? a : p;
+    const other = lead === a ? p : a;
+    used.add(a.id); used.add(p.id);
+    const block = lead.block || other.block;
+    const alerts = [...lead.alerts, ...other.alerts];
+    out.push({ ...lead, partner: other, kinds: [...lead.kinds, ...other.kinds], block, alerts,
+      status: block ? 'blocked' : alerts.length ? 'warning' : 'ok' });
+  }
+  return out;
+}
+
+/** "Generator 350 kVA" or, with its cube, "Generator 350 kVA + Fuel cube Large". */
+export const kindLine = (a) => (a.partner ? `${esc(a.kind)} <span class="muted">+ ${esc(a.partner.kind)}</span>` : esc(a.kind));
 
 export const rowClass = (a) => `clickable${a.block ? ' is-blocked' : ''}`;
 
@@ -83,6 +112,6 @@ export function initToolbar(el, { sorts = ['kind', 'status', 'fuel-asc', 'batter
 
 export function applyFilters(units, { q, kind, status, sort }) {
   return units
-    .filter((a) => (!kind || a.kind === kind) && (!status || a.status === status) && (!q || haystack(a).includes(q)))
+    .filter((a) => (!kind || a.kinds.includes(kind)) && (!status || a.status === status) && (!q || haystack(a).includes(q)))
     .sort(SORTS[sort]?.[1] || SORTS.kind[1]);
 }

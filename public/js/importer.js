@@ -61,6 +61,15 @@ export function parseDate(value) {
   return !Number.isNaN(back.getTime()) && back.getUTCDate() === Number(d) ? iso : v;
 }
 
+/** The column for a field: its exact label, else a header that is part of the label ("inspection due") or contains it. */
+function columnFor(head, label) {
+  const l = norm(label);
+  const exact = head.indexOf(l);
+  if (exact >= 0) return exact;
+  const near = head.map((h, i) => (h.length >= 4 && (l.includes(h) || h.includes(l)) ? i : -1)).filter((i) => i >= 0);
+  return near.length === 1 ? near[0] : -1;
+}
+
 /**
  * Reads the filled-in template. Returns { rows: [{ line, type_id, serial, attributes }], problems: [{ line, error }] }.
  * Columns are found by their names in the header row, in any order.
@@ -89,7 +98,7 @@ export function parseAssetRows(text, types) {
     seen.add(key);
     const raw = {};
     for (const f of assetFields(type)) {
-      const c = head.indexOf(norm(f.label));
+      const c = columnFor(head, f.label);
       let v = c >= 0 ? String(cells[c] ?? '').trim() : '';
       if (v && f.type === 'select') v = matchOption(f.options, v);
       if (v && f.type === 'date') v = parseDate(v);

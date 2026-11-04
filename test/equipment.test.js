@@ -25,3 +25,10 @@ test('a service after the last scan clears its alarms', () => {
   assert.equal(alertsFor({ ...a, serviced_at: '2026-11-02T10:00:00Z' }, type, today).length, 0);
   assert.equal(effectiveCheck({ ...a, serviced_at: '2026-10-30T10:00:00Z' }, type).data.alarms.length, 1);
 });
+
+test('a refuel after the last scan clears a low fuel alarm but keeps other alarms', () => {
+  const t = { fields: [{ key: 'alarms', label: 'Alarms', type: 'multiselect', scope: 'check', options: ['Low fuel', 'Overload'], alert: { any: true } }] };
+  const a = { attributes: {}, check: { recorded_at: '2026-11-01T10:00:00Z', data: { alarms: ['Low fuel', 'Overload'] } }, refueled_at: '2026-11-02T10:00:00Z' };
+  assert.deepEqual(effectiveCheck(a, t).data.alarms, ['Overload']);
+  assert.deepEqual(effectiveCheck({ ...a, refueled_at: '2026-10-30T10:00:00Z' }, t).data.alarms, ['Low fuel', 'Overload']);
+});

@@ -66,3 +66,12 @@ test('missing columns are explained', () => {
   assert.match(parseAssetRows('a,b\n1,2', types).problems[0].error, /Equipment type.*Serial number/);
   assert.match(parseAssetRows('', types).problems[0].error, /empty/);
 });
+
+test('headers only need to be part of the field label', () => {
+  const types = [{ id: 'g', name: 'Generator', fields: [
+    { key: 'kva', label: 'Rating', type: 'select', scope: 'asset', required: true, options: ['30 kVA', '350 kVA'] },
+    { key: 'inspection_due', label: 'Lifting points inspection due', type: 'date', scope: 'asset', required: true }] }];
+  const r = parseAssetRows('type,serial,rating,inspection due\nGenerator,G-1,350,31-12-2027', types);
+  assert.deepEqual(r.problems, []);
+  assert.equal(r.rows[0].attributes.inspection_due, '2027-12-31');
+});

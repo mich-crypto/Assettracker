@@ -2,7 +2,7 @@
 // status (orange = warning, red = defect or not usable), service report and refuel planning.
 import { ago, api, esc, fmtDate, fmtTime, path, registerServiceWorker, renderHeader, requireProject, toast } from './app.js';
 import { kindOf as kindOfType, typeById } from './equipment.js';
-import { applyFilters, enrich as enrichUnit, fuelCell, initToolbar, rowClass, statusCell } from './equipment-list.js';
+import { applyFilters, enrich as enrichUnit, fuelCell, groupPairs, initToolbar, kindLine, rowClass, statusCell } from './equipment-list.js';
 import { formatValue } from './fields.js';
 import { printOnly } from './print.js';
 import { fuelRows, rowsToText, serviceRows } from './reports.js';
@@ -75,10 +75,10 @@ function render() {
       <td>${fuelCell(a)}</td><td>${statusCell(a)}</td><td>${checkedCell(a)}</td>
     </tr>`).join('') || `<tr><td colspan="4" class="muted">${onSov.length ? 'Nothing matches.' : 'No equipment on the SOV.'}</td></tr>`;
 
-  const wtgList = applyFilters(onWtg, barWtg.state());
+  const wtgList = applyFilters(groupPairs(onWtg), barWtg.state());
   $('wtg-rows').innerHTML = wtgList.map((a) => `<tr class="${rowClass(a)}" data-id="${a.id}">
       <td class="wtg-name">${esc(a.last.location_name)}</td>
-      <td><b>${esc(a.kind)}</b>${movedTag(a)}</td>
+      <td><b>${kindLine(a)}</b>${a.partner ? '' : movedTag(a)}</td>
       <td>${fuelCell(a)}</td><td>${statusCell(a)}</td><td>${checkedCell(a)}</td>
     </tr>`).join('') || `<tr><td colspan="5" class="muted">${onWtg.length ? 'Nothing matches.' : 'No equipment on turbines.'}</td></tr>`;
 
@@ -104,7 +104,7 @@ function renderReports() {
   $('svc-count').textContent = svc.length ? `(${svc.length})` : '';
   $('svc-rows').innerHTML = svc.map((r) => `<tr class="clickable" data-id="${esc(r.id)}">
       <td>${esc(r.location)}</td><td><b>${esc(r.kind)}</b><div class="muted">${esc(r.serial)}</div></td>
-      <td>${r.reasons.map((x) => `<div><span class="warn-sym" aria-hidden="true">⚠</span> ${esc(x)}</div>`).join('')}</td>
+      <td>${r.reasons.map((x) => `<div>${/^Defect|overdue/i.test(x) ? '<span aria-hidden="true">⛔</span>' : '<span class="warn-sym" aria-hidden="true">⚠</span>'} ${esc(x)}</div>`).join('')}</td>
       <td>${r.servicedAt ? esc(fmtDate(r.servicedAt)) : '<span class="muted">—</span>'}</td></tr>`).join('')
     || '<tr><td colspan="4" class="muted">Nothing needs service right now.</td></tr>';
 
@@ -112,7 +112,7 @@ function renderReports() {
   $('fuel-count').textContent = fuel.length ? `(${fuel.length})` : '';
   $('fuel-rows').innerHTML = fuel.map((r) => `<tr class="clickable" data-id="${esc(r.id)}">
       <td><b>${esc(r.location)}</b></td><td>${esc(r.kind)}<div class="muted">${esc(r.serial)}</div></td>
-      <td>${r.level}${esc(r.unit)}</td><td>${esc(ago(r.at))}</td></tr>`).join('')
+      <td>${r.level} ${esc(r.unit)}</td><td>${esc(ago(r.at))}</td></tr>`).join('')
     || '<tr><td colspan="4" class="muted">No equipment on turbines at or below this level.</td></tr>';
 }
 

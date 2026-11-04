@@ -335,7 +335,8 @@ const STEPS = {
     const f = checkFields().find((x) => x.key === key);
     const values = s.answers;
     const forCube = s.pairing?.direction === 'forward' && ['known', 'scanned'].includes(s.partner.status);
-    const about = forCube ? s.pairing.partnerType.name.toLowerCase() : s.type.name.toLowerCase();
+    const isBattery = /batter/i.test(f.key);
+    const about = forCube && !isBattery ? s.pairing.partnerType.name.toLowerCase() : s.type.name.toLowerCase();
     if (f.type === 'multiselect') {
       const chosen = new Set(values[key] || []);
       $('step').innerHTML = `<h1>${esc(f.label)}</h1><p class="muted">Tick every alarm that is active. Leave all unticked if there are none.</p>
@@ -361,7 +362,7 @@ const STEPS = {
     if (steps >= 2 && steps <= 11) {
       const choices = Array.from({ length: steps }, (_, n) => f.min + n * f.step);
       const lowAt = f.alert?.atMost ?? (f.alert?.below != null ? f.alert.below - 1e-9 : null);
-      $('step').innerHTML = `<h1>${esc(f.label)}</h1><p class="muted">Read the level on the ${esc(about)}.</p>
+      $('step').innerHTML = `<h1>${esc(f.label)}</h1><p class="muted">${isBattery ? `Read the battery level on the ${esc(about)}.` : `Read the level on the ${esc(about)}.`}</p>
         <div class="gauge-list">${[...choices].reverse().map((c) => `<button type="button" class="gauge${lowAt != null && c <= lowAt ? ' low' : ''}" data-v="${c}"><b>${c}${f.unit === '%' ? ' %' : esc(f.unit ? ` ${f.unit}` : '')}</b><span class="muted">${c === f.max ? 'full' : c === f.min ? 'empty' : ''}</span>
           <span class="bar"><span style="width:${((c - f.min) / (f.max - f.min)) * 100}%"></span></span></button>`).join('')}</div>`;
       $('step').querySelectorAll('[data-v]').forEach((b) => (b.onclick = () => { values[key] = Number(b.dataset.v); advance(); }));
