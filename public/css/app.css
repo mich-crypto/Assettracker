@@ -435,3 +435,12 @@ main.narrow-wide { max-width: 760px; margin: 0 auto; padding: 16px; }
 .sum-row { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; border-top: 1px solid var(--border); }
 .sum-row:first-of-type { border-top: 0; }
 .sum-row dt { color: var(--muted); } .sum-row dd { margin: 0; font-weight: 600; text-align: right; }
+
+/* GPS indicator: a dot, no text */
+.gps { display: inline-flex; align-items: center; gap: 8px; font-size: .85rem; font-weight: 700; color: var(--muted); letter-spacing: .04em; }
+.led { width: 12px; height: 12px; border-radius: 50%; background: var(--danger); box-shadow: 0 0 0 3px var(--danger-bg); }
+.gps[data-state="ok"] .led { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-bg); }
+.gps[data-state="weak"] .led { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-bg); }
+.gps[data-state="search"] .led { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-bg); animation: led-blink 1s infinite; }
+@keyframes led-blink { 50% { opacity: .35; } }
+.role b { grid-column: 2; font-size: 1.15rem; }

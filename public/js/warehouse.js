@@ -5,6 +5,7 @@ import {
   SLUG, api, esc, fmtDate, fmtTime, loadReference, path, registerServiceWorker, renderHeader, requireProject,
   startAutoSync, syncNow, toast, updateSyncPill,
 } from './app.js';
+import { showInstallGuide } from './install.js';
 import { alertsFor, kindOf, typeById } from './equipment.js';
 import { collectFields, renderFields, showErrors } from './forms.js';
 import { normalizeValues } from './fields.js';
@@ -36,6 +37,7 @@ async function init() {
     ref = { types: [], locations: [], assets: [], settings: {}, openIssues: 0 };
   }
   window.addEventListener('hashchange', route);
+  setTimeout(() => showInstallGuide({ auto: true }), 600);
   $('act-scan').onclick = async () => { const t = await scanQr(); if (t) pick(parseTagText(t)); };
   $('act-serial').onchange = () => { if ($('act-serial').value.trim()) pick($('act-serial').value.trim()); };
   $('act-confirm').onsubmit = onConfirmAction;

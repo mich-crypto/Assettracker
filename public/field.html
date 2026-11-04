@@ -26,13 +26,12 @@
           <input class="grow" name="code" type="text" placeholder="…or type the label code" autocapitalize="characters" autocomplete="off" aria-label="Label code">
           <button class="btn" type="submit">Go</button>
         </form>
-        <p class="muted" id="gps-warm" aria-live="polite"></p>
+        <div class="gps" id="gps" data-state="search" title="GPS"><span class="led" aria-hidden="true"></span>GPS</div>
       </div>
-      <div class="card">
+      <div class="card hidden" id="outbox-card">
         <div class="row" style="justify-content:space-between"><h2 style="margin:0">Waiting to sync</h2><button class="btn" id="btn-sync" type="button">Sync now</button></div>
-        <div id="outbox" class="muted" style="margin-top:8px">Nothing queued.</div>
+        <div id="outbox" style="margin-top:8px"></div>
       </div>
-      <p class="muted" id="data-age"></p>
     </section>
 
     <!-- the guided questions -->

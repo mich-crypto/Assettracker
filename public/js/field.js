@@ -3,6 +3,7 @@
 //   location (confirm or edit) -> alarms -> fuel cube (still there? connected?)
 //   -> fuel level -> summary -> save.
 // Everything is saved on the phone first and synced when there is a connection.
+import { showInstallGuide } from './install.js';
 import {
   SLUG, ago, api, esc, loadReference, path, registerServiceWorker, renderHeader, requireProject,
   startAutoSync, syncNow, toast, updateSyncPill,
@@ -42,7 +43,6 @@ async function init() {
     toast(e.message, 'error');
     ref = { types: [], locations: [], assets: [], settings: {}, openIssues: 0 };
   }
-  showDataAge();
   renderOutbox();
   watchGps();
 
@@ -59,7 +59,7 @@ async function init() {
   window.addEventListener('at:outbox', renderOutbox);
   window.addEventListener('hashchange', openFromHash);
   openFromHash();
-  maybeTour();
+  showInstallGuide({ auto: true }).then(maybeTour);
 }
 
 const typeOf = (a) => typeById(ref.types, a.type_id);
@@ -101,26 +101,19 @@ function maybeTour() {
   setTimeout(() => { if (!dlg.open) dlg.showModal(); }, 1800);
 }
 
-function showDataAge() {
-  $('data-age').textContent = ref.fromCache
-    ? `Offline: using the equipment list saved ${ago(ref.serverTime)}.`
-    : `Equipment list up to date (${ref.assets.length} equipment, ${ref.locations.length} locations).`;
-}
-
 // ---------------------------------------------------------------- GPS
 
 function watchGps() {
-  if (!('geolocation' in navigator)) { $('gps-warm').textContent = 'This device has no GPS: choose locations by hand.'; return; }
+  const led = (state, tip) => { $('gps').dataset.state = state; $('gps').title = tip; };
+  if (!('geolocation' in navigator)) { led('off', 'This device has no GPS: choose locations by hand'); return; }
   navigator.geolocation.watchPosition(
     (p) => {
       fix = { lat: p.coords.latitude, lon: p.coords.longitude, accuracy: p.coords.accuracy, timestamp: p.timestamp };
-      $('gps-warm').textContent = `GPS ready (±${Math.round(p.coords.accuracy)} m).`;
+      led(p.coords.accuracy > 100 ? 'weak' : 'ok', `GPS ±${Math.round(p.coords.accuracy)} m`);
       if (s && s.step === 'location' && !s.locManual && !s.editing) { autoPick(); render(); }
     },
     (err) => {
-      $('gps-warm').textContent = err.code === err.PERMISSION_DENIED
-        ? 'Location permission denied. Allow it in the browser settings, or choose locations by hand.'
-        : 'Waiting for GPS…';
+      led(err.code === err.PERMISSION_DENIED ? 'off' : 'search', err.code === err.PERMISSION_DENIED ? 'Location permission denied. Allow it in the browser settings' : 'Waiting for GPS');
     },
     { enableHighAccuracy: true, maximumAge: 30_000, timeout: 30_000 },
   );
@@ -179,7 +172,6 @@ async function openCode(raw) {
     try {
       await api(`/api/tags/${encodeURIComponent(code)}`);
       ref = await loadReference();
-      showDataAge();
       asset = findAsset(code);
     } catch (e) {
       if (e.status && e.status !== 404) toast(e.message, 'error');
@@ -683,7 +675,8 @@ async function renderOutbox() {
   const items = (await outbox.all()).sort((a, b) => a.recorded_at.localeCompare(b.recorded_at));
   pending = items;
   const box = $('outbox');
-  if (!items.length) { box.textContent = 'Nothing queued. Everything is on the server.'; return; }
+  $('outbox-card').classList.toggle('hidden', !items.length);
+  if (!items.length) { box.textContent = ''; return; }
   box.innerHTML = items.map((i) => `
     <div class="outbox-item">
       <div>
