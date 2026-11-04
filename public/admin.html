@@ -9,11 +9,15 @@
   <link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="/css/app.css">
 </head>
-<body>
-  <main>
-    <h1>Admin</h1>
-    <p class="muted">Create projects, hand out their links and QR codes, set up turbines and print labels. This page is not protected yet: anyone who knows its address can use it.</p>
+<body>  <main class="admin">
+    <header class="admin-head">
+      <h1>Admin</h1>
+      <nav class="tabs" id="top-tabs" aria-label="Admin sections"><a href="#/" data-top="home">Overview</a><a href="#/finance" data-top="finance">Finance</a></nav>
+    </header>
 
+    <!-- ================= overview of everything ================= -->
+    <section id="page-home">
+      <div class="tile-grid" id="home-tiles"></div>
     <section class="card" id="projects-card">
       <div class="section-head"><h2>Projects</h2><button class="btn btn-primary" type="button" id="btn-new-project">+ New project</button></div>
       <form id="new-project" class="hidden stack" autocomplete="off">
@@ -31,12 +35,23 @@
       <div class="project-grid" id="project-list"></div>
     </section>
 
+      <section class="card" id="tickets-card">
+        <h2>Support tickets</h2>
+        <p class="muted">Not available yet. Later, projects can raise a ticket or ask a question here, and you see what needs your attention.</p>
+      </section>
+    </section>
+
+    <!-- ================= money ================= -->
+    <section class="hidden" id="page-finance">
+    <section class="card" id="money-card"><h2>Money</h2><p class="muted">What you invoice, what has been paid, and what is still to come in.</p><div id="money-months"></div><div id="money-projects"></div></section>
+
     <section class="card" id="billing-card">
       <div class="section-head"><h2>Billing</h2>
         <div class="row"><button class="btn" type="button" id="bl-run">Create due invoices now</button><button class="btn btn-primary" type="button" id="bl-new">+ Manual invoice</button></div></div>
       <p class="muted">Each project with billing switched on gets a startup fee on its first month and a monthly fee in advance. Invoices are created every day at 05:00 UTC when they are due; you choose whether they stay drafts or are issued and e-mailed automatically.</p>
       <div class="tile-grid" id="bl-tiles"></div>
       <div class="row" style="margin-bottom:10px">
+        <select id="bl-proj" aria-label="Project"><option value="">All projects</option></select>
         <select id="bl-filter" aria-label="Show invoices">
           <option value="">All invoices</option><option value="todo">Needs action</option><option value="draft">Drafts</option>
           <option value="open">Unpaid</option><option value="overdue">Overdue</option><option value="paid">Paid</option><option value="void">Void</option>
@@ -96,10 +111,20 @@
       </form>
     </dialog>
 
-    <section class="card hidden" id="project-panel" aria-labelledby="pp-title">
-      <div class="section-head"><h2 id="pp-title"></h2><button class="link-btn" type="button" id="pp-close">Close panel</button></div>
+    </section>
 
-      <div class="grid-2" style="align-items:start">
+    <!-- ================= one project ================= -->
+    <section class="hidden" id="page-project">
+      <p><a href="#/" class="back-link">← All projects</a></p>
+      <div class="section-head"><h2 id="pp-title" style="margin:0"></h2><span id="pp-badge" class="badge"></span></div>
+      <nav class="tabs" id="p-tabs" aria-label="Project sections">
+        <a href="#" data-tab="overview">Overview</a><a href="#" data-tab="stats">Statistics</a><a href="#" data-tab="billing">Billing</a>
+        <a href="#" data-tab="details">Project details</a><a href="#" data-tab="types">Equipment types</a><a href="#" data-tab="settings">Settings</a><a href="#" data-tab="labels">QR labels</a>
+      </nav>
+
+      <div class="pane card" id="pane-overview">
+        <div class="tile-grid" id="po-tiles"></div>
+        <div class="grid-2" style="align-items:start">
         <div class="stack">
           <h3>Link and onboarding</h3>
           <div class="field">
@@ -120,32 +145,23 @@
           </div>
           <p class="muted" id="pp-mail-hint"></p>
         </div>
-
-        <form class="stack" id="pp-settings" autocomplete="off">
-          <h3>Settings</h3>
-          <div class="grid-2">
-            <div class="field"><label for="ps-name">Project name</label><input id="ps-name" type="text" required maxlength="80"></div>
-            <div class="field"><label for="ps-client">Client</label><input id="ps-client" type="text" maxlength="80"></div>
+          <div class="stack"><h3>Open the app</h3>
+            <div class="row"><a class="btn" id="po-overview" target="_blank" rel="noopener">Overview</a><a class="btn" id="po-warehouse" target="_blank" rel="noopener">Warehouse</a><a class="btn" id="po-field" target="_blank" rel="noopener">Scan</a></div>
+            <h3>Equipment</h3><div id="po-kinds" class="chips-row"></div>
           </div>
-          <div class="field"><label for="ps-email">Contact e-mail</label><input id="ps-email" type="text" inputmode="email" maxlength="120"></div>
-          <div class="field"><label for="ps-mode">Location check</label>
-            <select id="ps-mode">
-              <option value="test">Testing: the phone only suggests a location, and any position is accepted</option>
-              <option value="live">Live: outside the wind farm area the location must be chosen by hand</option>
-            </select></div>
-          <div class="grid-2">
-            <div class="field"><label for="ps-radius">GPS radius per turbine (m)</label><input id="ps-radius" type="number" min="10" max="10000" step="10">
-              <div class="muted">A phone this close to a turbine counts as "at" it.</div></div>
-            <div class="field"><label for="ps-farm">Wind farm area (km)</label><input id="ps-farm" type="number" min="1" max="100" step="1">
-              <div class="muted">Distance from the nearest turbine where the farm ends.</div></div>
-          </div>
-          <label class="check-inline"><input id="ps-nfc" type="checkbox"> Allow NFC tags (Android phones)</label>
-          <div class="field-error" id="ps-error"></div>
-          <div class="row"><button class="btn btn-primary" type="submit">Save settings</button></div>
-        </form>
+        </div>
       </div>
 
-      <form class="stack" id="pp-billing" autocomplete="off" style="margin-top:22px">
+      <div class="pane card hidden" id="pane-stats">
+        <div class="section-head"><h3 style="margin:0">How the app is used</h3>
+          <select id="st-days" aria-label="Period"><option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="90">Last 90 days</option></select></div>
+        <div class="tile-grid" id="st-tiles"></div>
+        <h3>Scans per day</h3><div id="st-chart" class="bars"></div>
+        <div class="grid-2" style="align-items:start"><div><h3>Most scanned locations</h3><div id="st-loc"></div></div><div><h3>Most scanned equipment</h3><div id="st-eq"></div></div></div>
+      </div>
+
+      <div class="pane card hidden" id="pane-billing">
+      <form class="stack" id="pp-billing" autocomplete="off">
         <h3>Billing for this project</h3>
         <label class="check-inline"><input id="pb-enabled" type="checkbox"> Invoice this project</label>
         <div class="grid-2">
@@ -165,7 +181,19 @@
         <div class="field-error" id="pb-error"></div>
         <div class="row"><button class="btn btn-primary" type="submit">Save billing</button><button class="btn" type="button" id="pb-invoices">Show this project's invoices</button></div>
       </form>
+      </div>
 
+      <div class="pane card hidden" id="pane-details">
+        <form class="stack" id="pp-details" autocomplete="off">
+          <h3>Project details</h3>
+          <div class="grid-2">
+            <div class="field"><label for="ps-name">Project name</label><input id="ps-name" type="text" required maxlength="80"></div>
+            <div class="field"><label for="ps-client">Client</label><input id="ps-client" type="text" maxlength="80"></div>
+            <div class="field"><label for="ps-email">Contact e-mail</label><input id="ps-email" type="text" inputmode="email" maxlength="120"></div>
+          </div>
+          <div class="field-error" id="pd-error"></div>
+          <div class="row"><button class="btn btn-primary" type="submit">Save details</button></div>
+        </form>
       <h3 style="margin-top:22px">Vessels (SOV)</h3>
       <p class="muted">A vessel moves, so it has no fixed position.</p>
       <div id="sov-list" class="chips-row"></div>
@@ -191,7 +219,6 @@
       <details style="margin-top:12px"><summary><b>Turbines in this project</b></summary>
         <div class="table-wrap"><table><thead><tr><th>Name</th><th>Latitude</th><th>Longitude</th><th></th></tr></thead><tbody id="wtg-rows"></tbody></table></div>
       </details>
-
       <h3 style="margin-top:22px">Close or delete</h3>
       <div class="row">
         <button class="btn" type="button" id="pp-status"></button>
@@ -203,21 +230,9 @@
       </form>
       <div class="muted">Closing makes the project read-only. Deleting removes its equipment, readings and turbines for good: type the project link to confirm.</div>
     </section>
-
-    <section class="card" id="labels-card">
-      <h2>QR labels to print</h2>
-      <p class="muted">Labels are generic: they hold only a random code, no serial number and no project. Print a batch on sticker sheets, send them to a project, and link each label to equipment by scanning it in the app.</p>
-      <div class="row" style="align-items:end">
-        <div class="field"><label for="lb-count">Number of labels</label><input id="lb-count" type="number" min="1" max="500" value="100" style="width:110px"></div>
-        <div class="field"><label for="lb-size">Label size</label>
-          <select id="lb-size"><option value="25">25 mm</option><option value="35" selected>35 mm</option><option value="50">50 mm</option></select></div>
-        <div class="field"><button class="btn btn-primary" type="button" id="lb-make">Create and print</button></div>
       </div>
-      <p class="muted">Print at 100 % scale. Scan one printed label with a phone before you print the whole batch. A new batch has new codes.</p>
-      <div id="lb-sheet" class="label-sheet hidden"></div>
-    </section>
 
-    <section class="card" id="types-card">
+      <div class="pane card hidden" id="pane-types">
       <h2>Equipment types</h2>
       <p class="muted">Choose what is recorded for each kind of equipment. No code or database change is needed to add new equipment or extra questions.</p>
       <div class="row" style="margin-bottom:14px">
@@ -254,6 +269,41 @@
             <div id="t-preview-check"></div>
           </div>
         </div>
+      </div>
+      </div>
+
+      <div class="pane card hidden" id="pane-settings">
+        <form class="stack" id="pp-settings" autocomplete="off">
+          <h3>Settings</h3>
+          <div class="field"><label for="ps-mode">Location check</label>
+            <select id="ps-mode">
+              <option value="test">Testing: the phone only suggests a location, and any position is accepted</option>
+              <option value="live">Live: outside the wind farm area the location must be chosen by hand</option>
+            </select></div>
+          <div class="grid-2">
+            <div class="field"><label for="ps-radius">GPS radius per turbine (m)</label><input id="ps-radius" type="number" min="10" max="10000" step="10">
+              <div class="muted">A phone this close to a turbine counts as "at" it.</div></div>
+            <div class="field"><label for="ps-farm">Wind farm area (km)</label><input id="ps-farm" type="number" min="1" max="100" step="1">
+              <div class="muted">Distance from the nearest turbine where the farm ends.</div></div>
+          </div>
+          <label class="check-inline"><input id="ps-nfc" type="checkbox"> Allow NFC tags (Android phones)</label>
+          <div class="field-error" id="ps-error"></div>
+          <div class="row"><button class="btn btn-primary" type="submit">Save settings</button></div>
+        </form>
+      </div>
+
+      <div class="pane card hidden" id="pane-labels">
+      <h2>QR labels to print</h2>
+      <p class="muted">Labels are generic: they hold only a random code, no serial number and no project. Print a batch on sticker sheets, send them to a project, and link each label to equipment by scanning it in the app.</p>
+      <div class="row" style="align-items:end">
+        <div class="field"><label for="lb-count">Number of labels</label><input id="lb-count" type="number" min="1" max="500" value="100" style="width:110px"></div>
+        <div class="field"><label for="lb-size">Label size</label>
+          <select id="lb-size"><option value="25">25 mm</option><option value="35" selected>35 mm</option><option value="50">50 mm</option></select></div>
+        <div class="field"><button class="btn btn-primary" type="button" id="lb-make">Create and print</button></div>
+      </div>
+      <p class="muted">Print at 100 % scale. Scan one printed label with a phone before you print the whole batch. A new batch has new codes.</p>
+      <div id="lb-sheet" class="label-sheet hidden"></div>
+    </section>
       </div>
     </section>
   </main>

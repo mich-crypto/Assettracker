@@ -1,10 +1,11 @@
 // Admin: projects (create, settings, onboarding, turbines, close, delete), generic
 // QR labels, and the equipment types shared by all projects.
 import { api, esc, toast } from './app.js';
+import { kindOf } from './equipment.js';
 import { parseLocationRows } from './coords.js';
 import { downloadBlob, printOnly, qrPng, qrSvg } from './print.js';
 import { newTagCode, tagUrl } from './scan.js';
-import { initTypesEditor } from './types-editor.js';
+import { initTypesEditor, showTypesFor } from './types-editor.js';
 import { validSlug } from './projects.js';
 import { initBilling } from './admin-billing.js';
 
@@ -18,6 +19,8 @@ let parsed = null;         // result of "Check the list"
 let map = null;
 let mapLayer = null;
 let billing = null;
+let invoices = [];
+const TABS = ['overview', 'stats', 'billing', 'details', 'types', 'settings', 'labels'];
 
 init();
 
@@ -34,7 +37,6 @@ async function init() {
     $('np-slug').dispatchEvent(new Event('input'));
   };
   $('np-slug').addEventListener('keydown', () => { $('np-slug').dataset.touched = '1'; });
-  $('pp-close').onclick = () => { current = null; $('project-panel').classList.add('hidden'); renderProjects(); };
   $('site-base').value = siteBase();
   $('site-base').onchange = () => {
     try { localStorage.setItem(BASE_KEY, $('site-base').value.trim().replace(/\/+$/, '')); } catch { /* ignore */ }
@@ -45,6 +47,10 @@ async function init() {
   $('pp-print').onclick = printOnboarding;
   $('pp-png').onclick = async () => downloadBlob(await qrPng(projectUrl()), `${current.slug}-qr.png`);
   $('pp-settings').onsubmit = onSaveSettings;
+  $('pp-details').onsubmit = onSaveSettings;
+  $('st-days').onchange = loadStats;
+  window.addEventListener('hashchange', route);
+  window.addEventListener('billing:loaded', (e) => { invoices = e.detail.invoices; renderHomeTiles(); });
   $('pp-status').onclick = onToggleStatus;
   $('pp-delete').onsubmit = onDelete;
   $('sov-form').onsubmit = onAddSov;
@@ -55,7 +61,8 @@ async function init() {
   $('lb-make').onclick = makeLabels;
   billing = initBilling({ getProjects: () => projects, reloadProjects: loadProjects });
   await loadProjects();
-  initTypesEditor().catch((e) => toast(e.message, 'error'));
+  initTypesEditor();
+  route();
 }
 
 function siteBase() {
@@ -75,17 +82,33 @@ async function copy(text, message) {
 async function loadProjects() {
   ({ projects } = await api('/api/projects'));
   renderProjects();
+  renderHomeTiles();
+}
+
+function renderHomeTiles() {
+  const active = projects.filter((p) => p.status === 'active');
+  const sum = (k) => projects.reduce((n, p) => n + (p[k] || 0), 0);
+  const today = new Date().toISOString().slice(0, 10), month = today.slice(0, 7);
+  const open = invoices.filter((i) => i.status === 'issued' || i.status === 'sent');
+  const money = (c) => (c / 100).toLocaleString('en-GB', { style: 'currency', currency: 'EUR' });
+  const tile = (label, value, sub = '', href = '') => `<${href ? `a href="${href}"` : 'div'} class="tile"><span>${label}</span><b>${value}</b><span>${sub}</span></${href ? 'a' : 'div'}>`;
+  $('home-tiles').innerHTML =
+    tile('Active projects', String(active.length), `${projects.length - active.length} closed`) +
+    tile('Equipment in use', String(sum('assets')), `${sum('wtgs')} turbines in total`) +
+    tile('Defect equipment', String(sum('defects')), sum('defects') ? 'cannot be used' : 'all usable') +
+    tile('Reported by technicians', String(sum('open_issues')), 'to investigate') +
+    tile('Invoiced this month', money(invoices.filter((i) => i.status !== 'draft' && i.status !== 'void' && (i.issue_date || '').startsWith(month)).reduce((n, i) => n + i.total_cents, 0)), 'incl. VAT', '#/finance') +
+    tile('Still to be paid', money(open.reduce((n, i) => n + i.total_cents, 0)), `${open.filter((i) => i.due_date && i.due_date < today).length} overdue`, '#/finance');
 }
 
 function renderProjects() {
   $('project-list').innerHTML = projects.map((p) => `
-    <button type="button" class="project-card${current?.id === p.id ? ' selected' : ''}" data-id="${esc(p.id)}">
+    <a class="project-card${current?.id === p.id ? ' selected' : ''}" href="#/p/${esc(p.slug)}/overview">
       <b>${esc(p.name)}</b>
       <span class="mono">/${esc(p.slug)}</span>
-      <span class="muted">${p.client ? `${esc(p.client)} · ` : ''}${p.wtgs} turbines · ${p.assets} equipment${p.open_issues ? ` · <span class="warn-sym">⚠</span> ${p.open_issues} to investigate` : ''}</span>
+      <span class="muted">${p.client ? `${esc(p.client)} · ` : ''}${p.wtgs} turbines · ${p.assets} equipment${p.defects ? ` · <span class="stat-blocked">⛔ ${p.defects}</span>` : ''}${p.open_issues ? ` · <span class="warn-sym">⚠</span> ${p.open_issues} to investigate` : ''}</span>
       <span class="badge ${p.status === 'active' ? 'badge-ok' : ''}">${p.status === 'active' ? (p.geo_mode === 'live' ? 'live' : 'testing') : 'closed'}</span>
-    </button>`).join('') || '<p class="muted">No projects yet. Create the first one.</p>';
-  $('project-list').querySelectorAll('.project-card').forEach((b) => (b.onclick = () => selectProject(b.dataset.id)));
+    </a>`).join('') || '<p class="muted">No projects yet. Create the first one.</p>';
 }
 
 async function onCreate(e) {
@@ -102,16 +125,40 @@ async function onCreate(e) {
     $('new-project').classList.add('hidden');
     toast(`Project ${project.name} created`, 'ok');
     await loadProjects();
-    selectProject(project.id);
+    location.hash = `#/p/${project.slug}/overview`;
   } catch (err) { $('np-error').textContent = err.message; }
 }
 
-async function selectProject(id) {
-  current = projects.find((p) => p.id === id);
-  if (!current) return;
-  renderProjects();
-  $('project-panel').classList.remove('hidden');
+// ---------------------------------------------------------------- pages and tabs
+
+function route() {
+  const parts = location.hash.replace(/^#\/?/, '').split('/');
+  const page = parts[0] === 'finance' ? 'finance' : parts[0] === 'p' && parts[1] ? 'project' : 'home';
+  for (const id of ['home', 'finance', 'project']) $(`page-${id}`).classList.toggle('hidden', id !== page);
+  document.querySelectorAll('#top-tabs a').forEach((a) => a.toggleAttribute('aria-current', a.dataset.top === (page === 'project' ? 'home' : page)));
+  if (page === 'project') openProject(parts[1], TABS.includes(parts[2]) ? parts[2] : 'overview');
+  else current = null;
+  window.scrollTo(0, 0);
+}
+
+async function openProject(slug, tab) {
+  if (!projects.length) await loadProjects();
+  const p = projects.find((x) => x.slug.toLowerCase() === slug.toLowerCase());
+  if (!p) { location.hash = '#/'; return; }
+  if (current?.id !== p.id) await loadProject(p);
+  document.querySelectorAll('#p-tabs a').forEach((a) => {
+    a.href = `#/p/${p.slug}/${a.dataset.tab}`;
+    a.toggleAttribute('aria-current', a.dataset.tab === tab);
+  });
+  for (const t of TABS) $(`pane-${t}`).classList.toggle('hidden', t !== tab);
+  if (tab === 'stats') loadStats();
+}
+
+async function loadProject(p) {
+  current = p;
   $('pp-title').textContent = `${current.name}  ·  /${current.slug}`;
+  $('pp-badge').textContent = current.status === 'active' ? (current.geo_mode === 'live' ? 'live' : 'testing') : 'closed';
+  $('pp-badge').className = `badge ${current.status === 'active' ? 'badge-ok' : ''}`;
   $('ps-name').value = current.name;
   $('ps-client').value = current.client || '';
   $('ps-email').value = current.contact_email || '';
@@ -119,7 +166,7 @@ async function selectProject(id) {
   $('ps-radius').value = current.gps_radius_m;
   $('ps-farm').value = current.farm_radius_km;
   $('ps-nfc').checked = !!current.nfc_enabled;
-  $('ps-error').textContent = '';
+  $('ps-error').textContent = ''; $('pd-error').textContent = '';
   $('pp-status').textContent = current.status === 'active' ? 'Close project (read-only)' : 'Reopen project';
   $('pp-export').href = '#';
   $('pp-export').onclick = (e) => { e.preventDefault(); exportCsv(); };
@@ -129,10 +176,58 @@ async function selectProject(id) {
   $('wtg-result').innerHTML = '';
   $('wtg-import').classList.add('hidden');
   $('wtg-text').value = '';
+  ['overview', 'warehouse', 'field'].forEach((pg) => { $(`po-${pg}`).href = `/${current.slug}/${pg}`; });
   renderLink();
   billing.showProject(current);
+  showTypesFor(current).catch((e) => toast(e.message, 'error'));
+  loadOverview();
   await loadLocations();
-  $('project-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+/** The numbers on the project's first tab. */
+async function loadOverview() {
+  const slug = current.slug;
+  try {
+    const [{ assets }, { types }] = await Promise.all([api(`/api/p/${slug}/assets`), api(`/api/types?project=${current.id}`)]);
+    if (current?.slug !== slug) return;
+    const tile = (label, value, sub = '') => `<div class="tile"><span>${label}</span><b>${value}</b><span>${sub}</span></div>`;
+    const kinds = new Map();
+    for (const a of assets) { const k = kindOf(a, types.find((t) => t.id === a.type_id) || { name: a.type_id, fields: [] }); kinds.set(k, (kinds.get(k) || 0) + 1); }
+    $('po-tiles').innerHTML =
+      tile('Equipment', String(assets.length), `${assets.filter((a) => a.last?.location_kind === 'SOV').length} on the SOV · ${assets.filter((a) => a.last?.location_kind === 'WTG').length} on turbines`) +
+      tile('Turbines', String(current.wtgs), 'in the list') +
+      tile('Defect', String(assets.filter((a) => a.defect).length), 'cannot be used') +
+      tile('To investigate', String(current.open_issues || 0), 'reported by technicians');
+    $('po-kinds').innerHTML = [...kinds].sort((x, y) => x[0].localeCompare(y[0], undefined, { numeric: true })).map(([k, n]) => `<span class="kind-chip">${n} × ${esc(k)}</span>`).join('') || '<span class="muted">No equipment yet</span>';
+  } catch (err) { $('po-tiles').innerHTML = `<p class="field-error">${esc(err.message)}</p>`; }
+}
+
+/** Statistics: how often the app is used, to see what to improve. */
+async function loadStats() {
+  if (!current) return;
+  const slug = current.slug;
+  try {
+    const days = Number($('st-days').value);
+    const st = await api(`/api/projects/${current.id}/stats?days=${days}`);
+    if (current?.slug !== slug) return;
+    const n = (k) => st.perDay.filter((r) => r.kind === k).reduce((s, r) => s + r.n, 0);
+    const ev = (e) => st.events.find((x) => x.event === e)?.n || 0;
+    const q = st.quality || { scans: 0, manual: 0, late: 0 };
+    const pct = (x) => (q.scans ? `${Math.round((x / q.scans) * 100)} %` : '—');
+    const tile = (label, value, sub = '') => `<div class="tile"><span>${label}</span><b>${value}</b><span>${sub}</span></div>`;
+    $('st-tiles').innerHTML = tile('Scans', String(n('check')), `last ${days} days`) + tile('Movements', String(n('move')), 'placed by hand') +
+      tile('Refuels, services', `${ev('refuel')} · ${ev('service')}`, 'all time') + tile('Defects reported', String(ev('defect')), 'all time') +
+      tile('Location chosen by hand', pct(q.manual), 'of scans: GPS not used') + tile('Sent later', pct(q.late), 'of scans: made offline');
+    const byDay = new Map();
+    for (const r of st.perDay) if (r.kind === 'check') byDay.set(r.d, r.n);
+    const list = [];
+    for (let i = days - 1; i >= 0; i--) { const d = new Date(Date.now() - i * 86400e3).toISOString().slice(0, 10); list.push([d, byDay.get(d) || 0]); }
+    const max = Math.max(1, ...list.map((x) => x[1]));
+    $('st-chart').innerHTML = list.map(([d, v]) => `<div class="bar" title="${d}: ${v}"><span style="height:${Math.round((v / max) * 100)}%"></span></div>`).join('');
+    const rows = (arr, label) => (arr.length ? `<table><tbody>${arr.map((r) => `<tr><td>${esc(label(r))}</td><td class="num">${r.n}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">No scans in this period.</p>');
+    $('st-loc').innerHTML = rows(st.topLocations, (r) => r.name || 'Elsewhere');
+    $('st-eq').innerHTML = rows(st.topEquipment, (r) => r.serial);
+  } catch (err) { $('st-tiles').innerHTML = `<p class="field-error">${esc(err.message)}</p>`; }
 }
 
 async function onSaveSettings(e) {
@@ -146,9 +241,8 @@ async function onSaveSettings(e) {
     toast('Settings saved', 'ok');
     await loadProjects();
     current = projects.find((p) => p.id === project.id);
-    $('pp-title').textContent = `${current.name}  ·  /${current.slug}`;
-    renderLink();
-  } catch (err) { $('ps-error').textContent = err.message; }
+    await loadProject(current);
+  } catch (err) { $('ps-error').textContent = err.message; $('pd-error').textContent = err.message; }
 }
 
 async function onToggleStatus() {
@@ -158,7 +252,7 @@ async function onToggleStatus() {
     await api(`/api/projects/${current.id}`, { method: 'PATCH', body: { status: next } });
     toast(next === 'closed' ? 'Project closed' : 'Project reopened', 'ok');
     await loadProjects();
-    selectProject(current.id);
+    await loadProject(projects.find((p) => p.id === current.id));
   } catch (err) { toast(err.message, 'error'); }
 }
 
@@ -168,8 +262,8 @@ async function onDelete(e) {
     await api(`/api/projects/${current.id}`, { method: 'DELETE', body: { confirm: $('pp-delete-confirm').value } });
     toast(`Project ${current.name} deleted`, 'ok');
     current = null;
-    $('project-panel').classList.add('hidden');
     await loadProjects();
+    location.hash = '#/';
   } catch (err) { toast(err.message, 'error'); }
 }
 

@@ -6,12 +6,30 @@ import { renderFields } from './forms.js';
 
 const $ = (id) => document.getElementById(id);
 let types = [];
+let project = null;     // the project whose types are edited
+let own = true;         // false: the project still uses the standard types
 
 export function initTypesEditor() {
   $('t-select').onchange = showType;
   $('t-new').onclick = newType;
   $('t-save').onclick = saveType;
-  return loadTypes();
+  const notice = document.createElement('div');
+  notice.id = 't-notice'; notice.className = 'notice notice-warn hidden';
+  $('types-card') ? $('types-card').prepend(notice) : $('pane-types').prepend(notice);
+}
+
+/** Show the equipment types of one project. */
+export async function showTypesFor(p) {
+  project = p;
+  await loadTypes();
+}
+
+function lock() {
+  $('t-notice').classList.toggle('hidden', own);
+  $('t-notice').innerHTML = own ? '' : `<b>${esc(project.name)} uses the standard equipment types.</b> Give it its own copy to change what is asked for this project only.
+    <div class="row" style="margin-top:8px"><button class="btn btn-primary" type="button" id="t-own">Give this project its own equipment types</button></div>`;
+  if (!own) $('t-own').onclick = async () => { await api(`/api/projects/${project.id}/own-types`, { method: 'POST' }); toast('This project now has its own equipment types', 'ok'); await loadTypes(); };
+  for (const id of ['t-new', 't-save', 't-add', 't-preset', 't-name']) $(id).disabled = !own;
 }
 
 //
@@ -34,7 +52,7 @@ const PRESETS = {
 let draft = [];   // field definitions being edited; existing fields keep their key
 
 async function loadTypes(selectId) {
-  ({ types } = await api('/api/types'));
+  ({ types, own } = await api(`/api/types?project=${project.id}`));
   $('t-select').innerHTML = types.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('');
   if (selectId) $('t-select').value = selectId;
   $('t-add').onclick = () => addField({ label: '', type: 'text', scope: 'check' });
@@ -45,6 +63,7 @@ async function loadTypes(selectId) {
   };
   $('t-name').oninput = renderPreview;
   showType();
+  lock();
 }
 
 function showType() {
@@ -277,7 +296,7 @@ async function saveType() {
   try {
     const { type } = id
       ? await api(`/api/types/${id}`, { method: 'PATCH', body: { name, fields } })
-      : await api('/api/types', { method: 'POST', body: { name, fields } });
+      : await api('/api/types', { method: 'POST', body: { name, fields, project_id: project.id } });
     toast(`${type.name} saved`, 'ok');
     loadTypes(type.id);
   } catch (err) {

@@ -13,10 +13,10 @@ has the link (or its QR code) sees that project only.
 | **Start** | `/` | everyone | Enter a project code; explains unlinked labels |
 | **Project home** | `/BLP` | everyone | First visit: how to add the app to the home screen (iPhone, Android, laptop). Then three entry points |
 | **Scan** | `/BLP/field` | technicians | Guided questions after scanning a QR label (see below). Works offline |
-| **Warehouse** | `/BLP/warehouse` | warehouse supervisor | Add equipment, *Refuelled*, *Serviced*, things to investigate, equipment list (edit, retire, attach label), import from Excel |
+| **Warehouse** | `/BLP/warehouse` | warehouse supervisor | Add equipment, *Scan equipment* (refuelled, serviced, defect, repaired), equipment list split into SOV and turbines with fuel and status, things to investigate, import from Excel |
 | **Add equipment** | `/BLP/add` | warehouse supervisor | Step by step: type, rating / size, lifting points inspection date, serial number, stick the label, scan it |
 | **Overview** | `/BLP/overview` | site manager | What is on the vessel and on each turbine, fuel level, ⚠ warnings, map, service report, refuel planning, assign a location by serial number |
-| **Admin** | `/admin` | the owner | Create projects and hand out their QR code, settings, turbines, generic QR labels to print, equipment types, **billing and invoices** |
+| **Admin** | `/admin` | the owner | **Overview** (active projects, equipment in use, money) and **Finance** (invoices, money tracking); per project the tabs Overview, Statistics, Billing, Project details, Equipment types, Settings and QR labels |
 
 ## The guided scan (technicians)
 
@@ -36,6 +36,12 @@ Open the app (a short animation), scan the QR label, then one question per scree
 An unknown label can be reported too. These end up under **Warehouse → To investigate**.
 
 The first time, a three-card introduction explains the steps.
+
+## Defect and blocked equipment
+
+Equipment can be marked **defect** (when scanning, under *Something is wrong*, or in the warehouse under *Scan equipment*) and set back with *Repaired*.
+Defect equipment and equipment whose **lifting points inspection is overdue** are *blocked*: scanning them shows a red **Do not use** screen and no questions.
+In the lists, a red label means blocked and an orange ⚠ means warning. *Serviced* sets the next inspection date and clears alarms. The paper list (Overview → *Paper list (PDF)*) is for when the system is not available.
 
 ## Projects, links and onboarding
 
@@ -79,7 +85,7 @@ GPS radius and wind farm area (km from the nearest turbine) are project settings
 
 ## Equipment
 
-* **Equipment types** (Admin) define what is asked: fixed details when adding (rating, size, inspection date) and questions on every scan.
+* **Equipment types** (Admin → project → Equipment types) are per project: a project starts with its own copy of the standard types. They define what is asked: fixed details when adding (rating, size, inspection date) and questions on every scan.
   Yes/No questions can be hidden on the vessel (fuel cube) or link to another type ("scan the fuel cube").
   Date fields can warn when a date is close: the **lifting points inspection** warns 30 days ahead and when overdue.
 * **Fuel cube** size (Large / Small) is set when adding it.
@@ -117,7 +123,7 @@ The D1 database `assetdatabase` is configured in `wrangler.jsonc`.
 ```bash
 npm install
 npx wrangler login
-npm run db:migrate:remote        # applies migrations 0001 ... 0010
+npm run db:migrate:remote        # applies migrations 0001 ... 0012
 npm run deploy
 ```
 

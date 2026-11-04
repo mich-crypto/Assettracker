@@ -43,10 +43,38 @@ export function initBilling({ getProjects, reloadProjects }) {
     catch (err) { $('bs-error').textContent = err.message; }
   };
 
+  // ------------------------------------------------------------ money: invoiced, paid, still to come in
+  function renderMoney() {
+    const cur = settings?.currency || 'EUR';
+    const real = invoices.filter((i) => i.status !== 'draft' && i.status !== 'void');
+    const months = [];
+    for (let k = 0, d = new Date(); k < 12; k++, d.setUTCMonth(d.getUTCMonth() - 1)) months.push(d.toISOString().slice(0, 7));
+    const sumBy = (list, key, m) => list.filter((i) => (i[key] || '').startsWith(m)).reduce((n, i) => n + i.total_cents, 0);
+    const rows = months.map((m) => [m, sumBy(real, 'issue_date', m), sumBy(real.filter((i) => i.status === 'paid'), 'paid_at', m)]).filter((r) => r[1] || r[2]);
+    $('money-months').innerHTML = rows.length
+      ? `<div class="table-wrap"><table><thead><tr><th>Month</th><th class="num">Invoiced</th><th class="num">Received</th></tr></thead><tbody>${rows.map(([m, a, b]) =>
+        `<tr><td>${esc(m)}</td><td class="num">${esc(fmtMoney(a, cur))}</td><td class="num">${esc(fmtMoney(b, cur))}</td></tr>`).join('')}</tbody></table></div>`
+      : '<p class="muted">No invoices issued yet.</p>';
+    const byProject = new Map();
+    for (const i of real) {
+      const r = byProject.get(i.project_id) || { name: i.project_name, invoiced: 0, paid: 0, open: 0, overdue: 0 };
+      r.invoiced += i.total_cents;
+      if (i.status === 'paid') r.paid += i.total_cents; else { r.open += i.total_cents; if (isOverdue(i, today())) r.overdue += i.total_cents; }
+      byProject.set(i.project_id, r);
+    }
+    $('money-projects').innerHTML = byProject.size
+      ? `<h3>Per project</h3><div class="table-wrap"><table><thead><tr><th>Project</th><th class="num">Invoiced</th><th class="num">Received</th><th class="num">Still to pay</th><th class="num">Overdue</th></tr></thead><tbody>${[...byProject.values()].map((r) =>
+        `<tr><td>${esc(r.name)}</td><td class="num">${esc(fmtMoney(r.invoiced, cur))}</td><td class="num">${esc(fmtMoney(r.paid, cur))}</td><td class="num">${esc(fmtMoney(r.open, cur))}</td><td class="num${r.overdue ? ' over' : ''}">${esc(fmtMoney(r.overdue, cur))}</td></tr>`).join('')}</tbody></table></div>` : '';
+  }
+
   // ------------------------------------------------------------ invoice list
   async function loadInvoices() {
     ({ invoices } = await api('/api/billing/invoices'));
-    renderTiles(); renderRows();
+    const keep = $('bl-proj').value;
+    $('bl-proj').innerHTML = '<option value="">All projects</option>' + getProjects().map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
+    $('bl-proj').value = keep;
+    renderTiles(); renderRows(); renderMoney();
+    window.dispatchEvent(new CustomEvent('billing:loaded', { detail: { invoices } }));
   }
 
   const statusOf = (i) => (isOverdue(i, today()) ? 'overdue' : i.status);
@@ -71,8 +99,9 @@ export function initBilling({ getProjects, reloadProjects }) {
   }
 
   function filtered() {
-    const f = $('bl-filter').value;
+    const f = $('bl-filter').value, pid = $('bl-proj').value;
     return invoices.filter((i) => {
+      if (pid && i.project_id !== pid) return false;
       const st = statusOf(i);
       if (f === 'todo') return st === 'draft' || st === 'overdue' || (i.status === 'issued');
       if (f === 'open') return i.status === 'issued' || i.status === 'sent';
@@ -108,6 +137,7 @@ export function initBilling({ getProjects, reloadProjects }) {
     $('bl-rows').querySelectorAll('button[data-act]').forEach((b) => (b.onclick = () => onAction(b.dataset.act, invoices.find((i) => i.id === b.dataset.id))));
   }
   $('bl-filter').onchange = renderRows;
+  $('bl-proj').onchange = renderRows;
 
   async function onAction(act, inv) {
     if (!inv) return;
@@ -261,7 +291,7 @@ export function initBilling({ getProjects, reloadProjects }) {
       const id = current.id; await reloadProjects(); current = getProjects().find((p) => p.id === id); showProject(current); renderTiles();
     } catch (err) { $('pb-error').textContent = err.message; }
   };
-  $('pb-invoices').onclick = () => { $('bl-filter').value = ''; document.getElementById('billing-card').scrollIntoView({ behavior: 'smooth' }); };
+  $('pb-invoices').onclick = () => { $('bl-filter').value = ''; $('bl-proj').value = current.id; renderRows(); location.hash = '#/finance'; };
 
   loadSettings().then(loadInvoices).catch((e) => toast(e.message, 'error'));
   return { showProject };

@@ -464,3 +464,19 @@ tr.is-blocked td:first-child { box-shadow: inset 4px 0 0 var(--danger); }
 .warn-text { margin-left: 6px; font-size: .85rem; color: var(--warn); }
 .paper { display: none; }
 @media print { .paper.print-area { display: block; position: static; font-size: 11pt; } .paper table { width: 100%; border-collapse: collapse; } .paper th, .paper td { border: 1px solid #000; padding: 4px 6px; text-align: left; } .paper td:last-child { width: 28%; } }
+
+/* Admin: pages, tabs, statistics */
+main.admin { max-width: 1100px; margin: 0 auto; padding: 16px; }
+.admin-head { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: end; justify-content: space-between; margin-bottom: 14px; }
+.admin-head h1 { margin: 0; }
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 10px 0 14px; border-bottom: 1px solid var(--border); }
+.tabs a { padding: 9px 14px; text-decoration: none; color: var(--muted); border-radius: 8px 8px 0 0; font-weight: 600; border: 1px solid transparent; border-bottom: 0; margin-bottom: -1px; }
+.tabs a:hover { color: var(--text); }
+.tabs a[aria-current] { color: var(--primary); background: var(--surface); border-color: var(--border); }
+.admin-head .tabs { margin: 0; border: 0; }
+.project-card { text-decoration: none; color: inherit; }
+.bars { display: flex; align-items: end; gap: 2px; height: 120px; padding: 6px 0; border-bottom: 1px solid var(--border); margin-bottom: 14px; }
+.bar { flex: 1; height: 100%; display: flex; align-items: end; }
+.bar span { display: block; width: 100%; min-height: 2px; background: var(--primary); border-radius: 2px 2px 0 0; }
+td.num, th.num { text-align: right; white-space: nowrap; }
+td.over { color: var(--danger); font-weight: 700; }

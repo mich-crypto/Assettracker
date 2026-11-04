@@ -23,13 +23,38 @@ function slug(s) {
   return String(s).toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
 }
 
-async function loadType(env, typeId) {
+async function loadType(env, typeId, projectId = null) {
   const row = await env.DB.prepare('SELECT * FROM asset_types WHERE id = ?').bind(typeId).first();
-  if (!row) throw new HttpError(400, `Unknown asset type: ${typeId}`);
+  if (!row || (projectId && row.project_id && row.project_id !== projectId)) throw new HttpError(400, `Unknown asset type: ${typeId}`);
   return { ...row, fields: parseJsonColumn(row.fields, []) };
 }
 
 const typeOut = (t) => ({ ...t, fields: parseJsonColumn(t.fields, []) });
+
+/** The equipment types of a project: its own copy when it has one, else the standard types. */
+async function typesOfProject(env, projectId, { all = false } = {}) {
+  const active = all ? '' : ' AND active = 1';
+  const own = await env.DB.prepare(`SELECT * FROM asset_types WHERE project_id = ?${active} ORDER BY name`).bind(projectId).all();
+  const hasOwn = own.results.length || (await env.DB.prepare('SELECT 1 AS x FROM asset_types WHERE project_id = ? LIMIT 1').bind(projectId).first());
+  if (hasOwn) return { rows: own.results, own: true };
+  const shared = await env.DB.prepare(`SELECT * FROM asset_types WHERE project_id IS NULL${active} ORDER BY name`).all();
+  return { rows: shared.results, own: false };
+}
+
+/** Gives a project its own copy of the standard types and re-points its equipment to the copies. */
+async function copyTypesToProject(env, project) {
+  const { results: shared } = await env.DB.prepare('SELECT * FROM asset_types WHERE project_id IS NULL AND active = 1').all();
+  const idOf = (id) => `${project.slug.toLowerCase()}-${id}`;
+  const ids = new Map(shared.map((t) => [t.id, idOf(t.id)]));
+  const stmts = [];
+  for (const t of shared) {
+    const fields = parseJsonColumn(t.fields, []).map((f) => (typeof f.pairWith === 'string' && ids.has(f.pairWith) ? { ...f, pairWith: ids.get(f.pairWith) } : f));
+    stmts.push(env.DB.prepare('INSERT INTO asset_types (id, name, fields, active, project_id) VALUES (?, ?, ?, 1, ?)').bind(ids.get(t.id), t.name, JSON.stringify(fields), project.id));
+  }
+  for (const [old, neu] of ids) stmts.push(env.DB.prepare('UPDATE assets SET type_id = ? WHERE project_id = ? AND type_id = ?').bind(neu, project.id, old));
+  if (stmts.length) await env.DB.batch(stmts);
+  return shared.length;
+}
 
 function assetOut(a) {
   const { attributes, tag_codes, ...rest } = a;
@@ -89,6 +114,7 @@ router.add('GET', '/api/projects', async ({ env, user }) => {
     `SELECT p.*,
        (SELECT COUNT(*) FROM assets a WHERE a.project_id = p.id AND a.status = 'active') AS assets,
        (SELECT COUNT(*) FROM locations l WHERE l.project_id = p.id AND l.kind = 'WTG' AND l.active = 1) AS wtgs,
+       (SELECT COUNT(*) FROM assets a WHERE a.project_id = p.id AND a.status = 'active' AND a.defect = 1) AS defects,
        (SELECT COUNT(*) FROM issues i WHERE i.project_id = p.id AND i.status = 'open') AS open_issues
      FROM projects p ORDER BY p.created_at DESC`,
   ).all();
@@ -156,6 +182,7 @@ router.add('POST', '/api/projects', async ({ request, env, user }) => {
   const id = newId();
   await env.DB.prepare('INSERT INTO projects (id, slug, name, client, contact_email) VALUES (?, ?, ?, ?, ?)')
     .bind(id, link, v.name, v.client ?? null, v.contact_email ?? null).run();
+  await copyTypesToProject(env, { id, slug: link });
   return json({ project: await env.DB.prepare('SELECT * FROM projects WHERE id = ?').bind(id).first() }, 201);
 });
 
@@ -168,6 +195,29 @@ router.add('PATCH', '/api/projects/:id', async ({ request, env, user, params }) 
     .bind(...keys.map((k) => v[k]), params.id).run();
   if (!res.meta.changes) throw new HttpError(404, 'Project not found');
   return json({ project: await env.DB.prepare('SELECT * FROM projects WHERE id = ?').bind(params.id).first() });
+});
+
+// Usage statistics of one project (scans, movements, events) for the admin, to see how the app is used.
+router.add('GET', '/api/projects/:id/stats', async ({ env, user, params, url }) => {
+  guard(user, 'admin');
+  const p = await env.DB.prepare('SELECT * FROM projects WHERE id = ?').bind(params.id).first();
+  if (!p) throw new HttpError(404, 'Project not found');
+  const days = Math.min(Math.max(Number(url.searchParams.get('days')) || 30, 7), 365);
+  const since = new Date(Date.now() - days * 86400e3).toISOString();
+  const base = 'FROM readings r JOIN assets a ON a.id = r.asset_id WHERE a.project_id = ?';
+  const [perDay, byKind, events, where, top, issues, quality] = await env.DB.batch([
+    env.DB.prepare(`SELECT substr(r.recorded_at, 1, 10) AS d, r.kind, COUNT(*) AS n ${base} AND r.recorded_at >= ? GROUP BY d, r.kind ORDER BY d`).bind(p.id, since),
+    env.DB.prepare(`SELECT r.kind, COUNT(*) AS n ${base} GROUP BY r.kind`).bind(p.id),
+    env.DB.prepare(`SELECT json_extract(r.data, '$.event') AS event, COUNT(*) AS n ${base} AND r.kind = 'event' GROUP BY event`).bind(p.id),
+    env.DB.prepare(`SELECT l.name, COUNT(*) AS n ${base.replace('WHERE', 'LEFT JOIN locations l ON l.id = r.location_id WHERE')} AND r.kind = 'check' AND r.recorded_at >= ? GROUP BY l.name ORDER BY n DESC LIMIT 8`).bind(p.id, since),
+    env.DB.prepare(`SELECT a.serial, a.type_id, COUNT(*) AS n ${base} AND r.kind = 'check' AND r.recorded_at >= ? GROUP BY a.id ORDER BY n DESC LIMIT 8`).bind(p.id, since),
+    env.DB.prepare('SELECT type, status, COUNT(*) AS n FROM issues WHERE project_id = ? GROUP BY type, status').bind(p.id),
+    env.DB.prepare(`SELECT COUNT(*) AS scans,
+        SUM(CASE WHEN r.location_source = 'manual' THEN 1 ELSE 0 END) AS manual,
+        SUM(CASE WHEN (julianday(r.received_at) - julianday(r.recorded_at)) * 1440 > 30 THEN 1 ELSE 0 END) AS late
+      ${base} AND r.kind = 'check' AND r.recorded_at >= ?`).bind(p.id, since),
+  ]);
+  return json({ days, since, perDay: perDay.results, byKind: byKind.results, events: events.results, topLocations: where.results, topEquipment: top.results, issues: issues.results, quality: quality.results[0] });
 });
 
 // Deletes a project with all its equipment, readings and locations. The caller must
@@ -188,6 +238,7 @@ router.add('DELETE', '/api/projects/:id', async ({ request, env, user, params })
     env.DB.prepare(`DELETE FROM tags WHERE asset_id IN ${mine}`).bind(p.id),
     env.DB.prepare('DELETE FROM assets WHERE project_id = ?').bind(p.id),
     env.DB.prepare('DELETE FROM locations WHERE project_id = ?').bind(p.id),
+    env.DB.prepare('DELETE FROM asset_types WHERE project_id = ?').bind(p.id),
     env.DB.prepare('DELETE FROM projects WHERE id = ?').bind(p.id),
   ]);
   return json({ ok: true });
@@ -287,8 +338,8 @@ router.add('PATCH', '/api/users/:id', async ({ request, env, user, params }) => 
 // settings, locations and equipment, plus the shared equipment types.
 P('GET', '/bootstrap', async ({ env, user, project }) => {
   guard(user);
-  const [types, locations, assets, states, issues] = await env.DB.batch([
-    env.DB.prepare('SELECT * FROM asset_types WHERE active = 1 ORDER BY name'),
+  const types = { results: (await typesOfProject(env, project.id)).rows };
+  const [locations, assets, states, issues] = await env.DB.batch([
     env.DB.prepare('SELECT * FROM locations WHERE project_id = ? AND active = 1 ORDER BY kind DESC, name').bind(project.id),
     env.DB.prepare(`${ASSET_SELECT} WHERE a.status = 'active' AND a.project_id = ? ORDER BY a.serial`).bind(project.id),
     // Where each unit was last seen and what it was connected to, so the phone
@@ -324,10 +375,25 @@ P('GET', '/bootstrap', async ({ env, user, project }) => {
 
 // ---------------------------------------------------------------- asset types (shared by all projects)
 
-router.add('GET', '/api/types', async ({ env, user }) => {
+// ?project=<id> gives that project's types (own: false means it still uses the standard ones).
+router.add('GET', '/api/types', async ({ env, user, url }) => {
   guard(user);
-  const { results } = await env.DB.prepare('SELECT * FROM asset_types ORDER BY name').all();
+  const pid = url.searchParams.get('project');
+  if (pid) {
+    const { rows, own } = await typesOfProject(env, pid, { all: true });
+    return json({ types: rows.map(typeOut), own });
+  }
+  const { results } = await env.DB.prepare('SELECT * FROM asset_types WHERE project_id IS NULL ORDER BY name').all();
   return json({ types: results.map(typeOut) });
+});
+
+router.add('POST', '/api/projects/:id/own-types', async ({ env, user, params }) => {
+  guard(user, 'admin');
+  const p = await env.DB.prepare('SELECT * FROM projects WHERE id = ?').bind(params.id).first();
+  if (!p) throw new HttpError(404, 'Project not found');
+  if ((await typesOfProject(env, p.id, { all: true })).own) throw new HttpError(409, 'This project already has its own equipment types');
+  const n = await copyTypesToProject(env, p);
+  return json({ copied: n });
 });
 
 function checkFields(fields) {
@@ -340,10 +406,18 @@ router.add('POST', '/api/types', async ({ request, env, user }) => {
   guard(user, 'admin');
   const body = await readJson(request);
   const name = str(body.name, { name: 'name', required: true, max: 80 });
-  const id = slug(body.id || name);
+  let id = slug(body.id || name);
   if (!id) throw new HttpError(400, 'Invalid type id');
-  await env.DB.prepare('INSERT INTO asset_types (id, name, fields) VALUES (?, ?, ?)')
-    .bind(id, name, checkFields(body.fields || []))
+  let pid = null;
+  if (body.project_id) {
+    const p = await env.DB.prepare('SELECT * FROM projects WHERE id = ?').bind(body.project_id).first();
+    if (!p) throw new HttpError(404, 'Project not found');
+    if (!(await typesOfProject(env, p.id, { all: true })).own) throw new HttpError(409, 'Give the project its own equipment types first');
+    pid = p.id;
+    id = `${p.slug.toLowerCase()}-${id}`;
+  }
+  await env.DB.prepare('INSERT INTO asset_types (id, name, fields, project_id) VALUES (?, ?, ?, ?)')
+    .bind(id, name, checkFields(body.fields || []), pid)
     .run();
   return json({ type: typeOut(await env.DB.prepare('SELECT * FROM asset_types WHERE id = ?').bind(id).first()) }, 201);
 });
@@ -538,7 +612,7 @@ async function assertSerialFree(env, typeId, serial, exceptId = null) {
 P('POST', '/assets', async ({ request, env, user, project }) => {
   guard(user, 'link');
   const body = await readJson(request);
-  const type = await loadType(env, body.type_id);
+  const type = await loadType(env, body.type_id, project.id);
   const serial = str(body.serial, { name: 'serial number', required: true, max: 80 });
   const { values, errors } = normalizeValues(type.fields, 'asset', body.attributes);
   if (Object.keys(errors).length) throw new HttpError(400, 'Please correct the highlighted fields', errors);
@@ -562,7 +636,7 @@ P('POST', '/assets/import', async ({ request, env, user, project }) => {
   const body = await readJson(request);
   if (!Array.isArray(body.rows) || !body.rows.length) throw new HttpError(400, 'rows must be a non-empty list');
   if (body.rows.length > 1000) throw new HttpError(400, 'At most 1000 rows per import');
-  const types = new Map((await env.DB.prepare('SELECT * FROM asset_types').all()).results.map((t) => [t.id, typeOut(t)]));
+  const types = new Map((await typesOfProject(env, project.id, { all: true })).rows.map((t) => [t.id, typeOut(t)]));
   const existing = new Set((await env.DB.prepare('SELECT type_id || char(30) || lower(serial) AS k FROM assets').all()).results.map((r) => r.k));
   const stmts = [];
   const problems = [];
@@ -602,7 +676,7 @@ P('PATCH', '/assets/:id', async ({ request, env, user, params, project }) => {
     sets.push('status = ?'); vals.push(body.status);
   }
   if (body.attributes !== undefined) {
-    const type = await loadType(env, current.type_id);
+    const type = await loadType(env, current.type_id, project.id);
     const { values, errors } = normalizeValues(type.fields, 'asset', body.attributes);
     if (Object.keys(errors).length) throw new HttpError(400, 'Please correct the highlighted fields', errors);
     sets.push('attributes = ?'); vals.push(JSON.stringify(values));
@@ -695,8 +769,8 @@ P('POST', '/readings/sync', async ({ request, env, user, project }) => {
   if (!items) throw new HttpError(400, 'readings must be a list');
   if (items.length > MAX_SYNC_BATCH) throw new HttpError(400, `At most ${MAX_SYNC_BATCH} readings per request`);
 
-  const [typeRows, locRows, assetRows, tagRows] = await env.DB.batch([
-    env.DB.prepare('SELECT * FROM asset_types'),
+  const typeRows = { results: (await typesOfProject(env, project.id, { all: true })).rows };
+  const [locRows, assetRows, tagRows] = await env.DB.batch([
     env.DB.prepare('SELECT id, kind FROM locations WHERE project_id = ?').bind(project.id),
     env.DB.prepare('SELECT id, type_id FROM assets WHERE project_id = ?').bind(project.id),
     env.DB.prepare('SELECT t.code, t.asset_id FROM tags t JOIN assets a ON a.id = t.asset_id WHERE a.project_id = ?').bind(project.id),
