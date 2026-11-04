@@ -1,8 +1,9 @@
 // Shared by the overview and the warehouse: a unit with its status, fuel and warnings,
 // and the search / filter / sort bar above a list of units.
-import { esc } from './app.js';
 import { alertsFor, blockedBy, effectiveCheck, kindOf, levelField, levelFields } from './equipment.js';
 import { formatValue } from './fields.js';
+
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 /** A unit from GET /assets plus what the lists need: kind, warnings, why it is blocked, fuel level. */
 export function enrich(a, type) {
@@ -42,8 +43,9 @@ export function statusCell(a) {
 }
 
 /**
- * A generator and the fuel cube connected to it, at the same place, become one line:
- * the generator with its cube. The line carries both units' status and the generator's levels.
+ * The units of one setup at a turbine (generator, battery pack, fuel cube) become one line: the generator
+ * with its connected units. The line carries every unit's status and levels. On the vessel nothing is
+ * combined: there they are separate items.
  */
 export function groupPairs(units) {
   const byId = new Map(units.map((u) => [u.id, u]));
@@ -51,24 +53,32 @@ export function groupPairs(units) {
   const out = [];
   for (const a of units) {
     if (used.has(a.id)) continue;
-    const pid = a.last?.linked_asset_id;
-    const p = pid && byId.get(pid);
-    const together = p && !used.has(p.id) && p.last?.linked_asset_id === a.id && p.last?.location_id && p.last.location_id === a.last.location_id;
-    if (!together) { out.push(a); continue; }
-    // The unit that has levels of its own to show (the generator) leads; the cube is the add-on.
-    const lead = a.levels.length >= p.levels.length && !(a.levels.length === p.levels.length && /cube/i.test(a.kind)) ? a : p;
-    const other = lead === a ? p : a;
-    used.add(a.id); used.add(p.id);
-    const block = lead.block || other.block;
-    const alerts = [...lead.alerts, ...other.alerts];
-    out.push({ ...lead, partner: other, kinds: [...lead.kinds, ...other.kinds], block, alerts,
+    const ids = a.last?.linked_asset_ids ?? (a.last?.linked_asset_id ? [a.last.linked_asset_id] : []);
+    const members = a.last?.location_kind === 'WTG'
+      ? ids.map((id) => byId.get(id)).filter((p) => p && !used.has(p.id) && p.last?.location_id && p.last.location_id === a.last.location_id
+        && (p.last.linked_asset_ids ?? [p.last.linked_asset_id]).includes(a.id))
+      : [];
+    if (!members.length) { out.push(a); continue; }
+    const all = [a, ...members];
+    all.forEach((u) => used.add(u.id));
+    // The generator (the unit that has the connect questions) leads the line.
+    const lead = all.find((u) => u.type.fields.some((f) => f.pairWith)) || all.find((u) => u.levels.length) || a;
+    const others = all.filter((u) => u !== lead);
+    const levels = [...lead.levels];
+    for (const o of others) for (const l of o.levels) if (!levels.some((x) => x.f.key === l.f.key)) levels.push(l);
+    // Say which unit of the setup is the problem (e.g. "Battery pack: Defect").
+    const bu = all.find((u) => u.block);
+    const block = bu ? (bu === lead ? bu.block : { ...bu.block, short: `${bu.type.name}: ${bu.block.short}` }) : null;
+    const alerts = all.flatMap((u) => u.alerts);
+    out.push({ ...lead, partners: others, partner: others[0], kinds: all.flatMap((u) => u.kinds), levels,
+      battery: levels.find((l) => /batter/i.test(l.f.key))?.v ?? null, block, alerts,
       status: block ? 'blocked' : alerts.length ? 'warning' : 'ok' });
   }
   return out;
 }
 
-/** "Generator 350 kVA" or, with its cube, "Generator 350 kVA + Fuel cube Large". */
-export const kindLine = (a) => (a.partner ? `${esc(a.kind)} <span class="muted">+ ${esc(a.partner.kind)}</span>` : esc(a.kind));
+/** "Generator 350 kVA" or, with its connected units, "Hybrid generator + Battery pack + Fuel cube Large". */
+export const kindLine = (a) => (a.partners?.length ? `${esc(a.kind)} <span class="muted">+ ${a.partners.map((p) => esc(p.kind)).join(' + ')}</span>` : esc(a.kind));
 
 export const rowClass = (a) => `clickable${a.block ? ' is-blocked' : ''}`;
 

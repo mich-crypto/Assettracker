@@ -32,3 +32,27 @@ test('a refuel after the last scan clears a low fuel alarm but keeps other alarm
   assert.deepEqual(effectiveCheck(a, t).data.alarms, ['Overload']);
   assert.deepEqual(effectiveCheck({ ...a, refueled_at: '2026-10-30T10:00:00Z' }, t).data.alarms, ['Low fuel', 'Overload']);
 });
+
+import { groupPairs } from '../public/js/equipment-list.js';
+
+test('a setup on a turbine is one line; on the vessel the units stay separate', () => {
+  const gt = { id: 'hybrid', name: 'Hybrid', fields: [{ key: 'fuel_cube', pairWith: 'fuel-cube' }] };
+  const pt = { id: 'battery-pack', name: 'Battery pack', fields: [] };
+  const unit = (id, type, kind, loc, kindOfLoc, links, levels = [], block = null) => ({
+    id, type, kind, kinds: [kind], serial: id, levels, alerts: [], block, status: block ? 'blocked' : 'ok', tags: [],
+    last: { location_id: loc, location_kind: kindOfLoc, linked_asset_ids: links },
+  });
+  const lvl = (key, v) => ({ f: { key, unit: '%' }, v });
+  const G = unit('g', gt, 'Hybrid', 'A1', 'WTG', ['b'], [lvl('fuel_level', 50)]);
+  const B = unit('b', pt, 'Battery pack', 'A1', 'WTG', ['g'], [lvl('battery_level', 80)], { text: 'Defect', short: 'Defect' });
+  const [line] = groupPairs([B, G]);
+  assert.equal(groupPairs([B, G]).length, 1);
+  assert.equal(line.id, 'g');
+  assert.deepEqual(line.levels.map((l) => l.f.key), ['fuel_level', 'battery_level']);
+  assert.equal(line.status, 'blocked');
+  assert.equal(line.block.short, 'Battery pack: Defect');
+  // on the vessel: separate lines
+  const G2 = { ...G, last: { location_id: 'S', location_kind: 'SOV', linked_asset_ids: [] } };
+  const B2 = { ...B, last: { location_id: 'S', location_kind: 'SOV', linked_asset_ids: [] } };
+  assert.equal(groupPairs([B2, G2]).length, 2);
+});

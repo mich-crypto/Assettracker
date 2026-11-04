@@ -11,7 +11,7 @@ import {
 import { blockedBy, kindOf, typeById } from './equipment.js';
 import { applyLocationRules, evaluateAlerts, fixedAt, formatValue, normalizeValues } from './fields.js';
 import { distanceM, resolveLocation } from './geo.js';
-import { knownPartner, pairingFor } from './pairing.js';
+import { knownPartnerOfType, lastState, pairingsFor } from './pairing.js';
 import { nfcSupported, parseTagText, readNfc, scanQr } from './scan.js';
 import { cache, outbox } from './store.js';
 
@@ -191,9 +191,11 @@ function startScan(asset, code) {
   if (block) { showBlocked(asset, type, block); return; }
   s = {
     asset, type, code, loc: null, locManual: false, editing: false, locSource: 'gps',
-    answers: {}, pairing: pairingFor(ref.types, type), known: null,
-    partner: { status: 'none', asset: null, code: null }, partnerAnswer: null, sov: null, issues: [], step: null,
+    answers: {}, memberAnswers: {}, pairs: pairingsFor(ref.types, type), slots: [],
+    anchor: { status: 'none', asset: null, code: null, answer: null, known: null }, member: null,
+    returning: null, returnable: [], sov: null, issues: [], step: null,
   };
+  buildSlots();
   trail = [];
   $('view-home').classList.add('hidden');
   $('view-flow').classList.remove('hidden');
@@ -228,37 +230,81 @@ function leaveFlow() {
 
 const sovs = () => ref.locations.filter((l) => l.kind === 'SOV');
 const checkFields = () => s.type.fields.filter((f) => f.scope === 'check');
-const pairField = () => (s.pairing?.direction === 'forward' ? s.pairing.field : null);
+const partnerLabel = (a) => (a ? kindOf(a, typeOf(a)) : '');
+
+// A setup is a generator (the anchor) with the units connected to it: a fuel cube and/or a battery pack.
+// Scanning the generator asks about each of them; scanning one of them first finds the generator.
+const isAnchor = () => s.slots.length > 0;
+const isMember = () => !isAnchor() && !!s.pairs.reverse;
+const connected = () => s.slots.filter((x) => ['known', 'scanned'].includes(x.status));
+
+function buildSlots() {
+  s.slots = s.pairs.forward.map((p) => ({ key: p.field.key, field: p.field, partnerType: p.partnerType, status: 'none', asset: null, code: null, known: null, answer: null, preset: false }));
+}
 
 /** The steps this scan needs, from what is known so far. Recomputed after every answer. */
 function plan() {
   const ids = ['location'];
   const fields = checkFields();
-  const pf = pairField();
   const fixedKeys = new Set(fixedAt(s.type.fields, s.loc?.kind).map((f) => f.key));
+  const slotKeys = new Set(s.slots.map((x) => x.key));
   for (const f of fields.filter((x) => x.type === 'multiselect')) ids.push(`f:${f.key}`);
-  if (pf && s.loc && !fixedKeys.has(pf.key)) {
-    if (s.known) {
-      ids.push('cube-known');
-      if (s.partner.status === 'removed' && sovs().length > 1) ids.push('cube-sov');
-    } else {
-      ids.push('cube-ask');
-      if (s.partnerAnswer === true) ids.push('cube-scan');
+  if (isAnchor() && s.loc) {
+    let anyRemoved = false;
+    for (const sl of s.slots) {
+      if (fixedKeys.has(sl.key) || sl.preset) continue;
+      if (sl.known) { ids.push(`known:${sl.key}`); if (sl.status === 'removed') anyRemoved = true; }
+      else { ids.push(`ask:${sl.key}`); if (sl.answer === true) ids.push(`scan:${sl.key}`); }
     }
-  } else if (s.pairing?.direction === 'reverse' && s.loc?.kind === 'WTG') {
-    if (s.known) ids.push('gen-known');
-    else { ids.push('gen-ask'); if (s.partnerAnswer === true) ids.push('gen-scan'); }
+    if (anyRemoved && sovs().length > 1) ids.push('sov');
+  } else if (isMember() && s.loc?.kind === 'WTG' && s.anchor.status !== 'declined') {
+    if (s.anchor.known) ids.push('anchor-known');
+    else { ids.push('anchor-ask'); if (s.anchor.answer === true) ids.push('anchor-scan'); }
   }
-  for (const f of fields.filter((x) => x.type === 'boolean' && x !== pf && !fixedKeys.has(x.key))) ids.push(`f:${f.key}`);
+  if (s.loc?.kind === 'SOV' && s.returnable.length) ids.push('return');
+  for (const f of fields.filter((x) => x.type === 'boolean' && !slotKeys.has(x.key) && !fixedKeys.has(x.key))) ids.push(`f:${f.key}`);
+  // Levels of the connected units that this unit does not report itself (a battery pack's battery level).
+  for (const sl of connected()) {
+    for (const f of sl.asset ? typeOf(sl.asset).fields.filter((x) => x.scope === 'check' && !['multiselect', 'boolean'].includes(x.type) && !fields.some((y) => y.key === x.key)) : []) ids.push(`mf:${sl.key}:${f.key}`);
+  }
   for (const f of fields.filter((x) => !['multiselect', 'boolean'].includes(x.type))) ids.push(`f:${f.key}`);
   ids.push('summary');
   return ids;
 }
 
+/** What is already known about this unit at the chosen location, including scans still waiting to sync. */
 function refreshKnown() {
-  const wanted = s.pairing?.partnerType?.id;
-  const p = s.loc && s.loc !== HERE ? knownPartner(s.asset, s.loc.id, ref.assets, pending) : null;
-  s.known = p && p.type_id === wanted ? p : null;
+  const lid = s.loc && s.loc !== HERE ? s.loc.id : null;
+  for (const sl of s.slots) sl.known = lid ? knownPartnerOfType(s.asset, lid, sl.partnerType.id, ref.assets, pending) : null;
+  if (isMember()) s.anchor.known = lid ? knownPartnerOfType(s.asset, lid, s.pairs.reverse.partnerType.id, ref.assets, pending) : null;
+  // On the vessel the units are separate. If the app still has this one together with others on a turbine, ask.
+  s.returnable = [];
+  if (s.loc?.kind === 'SOV') {
+    const own = lastState(s.asset.id, ref.assets, pending);
+    for (const id of own?.linked_asset_ids ?? []) {
+      const p = ref.assets.find((x) => x.id === id);
+      const st = p && lastState(id, ref.assets, pending);
+      const where = st && ref.locations.find((l) => l.id === st.location_id);
+      if (p && where?.kind === 'WTG' && st.linked_asset_ids.includes(s.asset.id)) s.returnable.push(p);
+    }
+  }
+}
+
+/** A connected unit was scanned first: continue as the generator it belongs to, with that unit already in the setup. */
+function becomeAnchor(a) {
+  const block = blockedBy(a, typeOf(a));
+  if (block) { showBlocked(a, typeOf(a), block); return; }
+  const member = { asset: s.asset, code: s.code };
+  s.member = member;
+  s.asset = a; s.type = typeOf(a); s.code = a.tags[0]?.code ?? member.code;
+  s.pairs = pairingsFor(ref.types, s.type);
+  buildSlots();
+  const sl = s.slots.find((x) => x.partnerType.id === member.asset.type_id);
+  if (sl) { Object.assign(sl, { status: 'scanned', asset: member.asset, code: member.code, preset: true, answer: true }); s.answers[sl.key] = true; }
+  s.anchor = { status: 'none', asset: null, code: null, answer: null, known: null };
+  refreshKnown();
+  s.step = 'location';
+  advance();
 }
 
 function go(step, { isBack = false } = {}) {
@@ -297,46 +343,16 @@ function render() {
   $('step-label').textContent = `${kindOf(s.asset, s.type)} · tag ${s.code}`;
   $('btn-back').textContent = s.step === 'location' ? 'Cancel scan' : 'Back';
   $('btn-next').onclick = null;
-  const [kind, key] = s.step.split(':');
-  (STEPS[kind] || STEPS.summary)(key);
+  const [kind, ...args] = s.step.split(':');
+  (STEPS[kind] || STEPS.summary)(...args);
 }
 
 // ---------------------------------------------------------------- steps
 
-const STEPS = {
-  location() {
-    refreshKnown();
-    if (!s.editing && s.loc) {
-      const warn = resolution?.requiresManual && s.loc !== HERE;
-      $('step').innerHTML = `<h1>Where are you?</h1>
-        <div class="loc-hero ${warn ? 'warn' : 'ok'}">
-          <div class="muted">${esc(locationStatus())}</div>
-          <div class="loc-name">${esc(locLabel(s.loc))}</div>
-          <div class="muted">${esc(resolution?.reason || '')}</div>
-        </div>
-        <button type="button" class="btn btn-primary btn-big" id="loc-confirm">Confirm</button>
-        <button type="button" class="btn btn-big" id="loc-edit" style="margin-top:10px">Edit</button>`;
-      $('loc-confirm').onclick = () => { s.locSource = s.loc === HERE || (!s.locManual && !resolution?.requiresManual) ? 'gps' : 'manual'; refreshKnown(); advance(); };
-      $('loc-edit').onclick = () => { s.editing = true; render(); };
-      nav({ hideBack: false });
-      return;
-    }
-    const waiting = !s.loc && !fix && 'geolocation' in navigator && !s.editing && !s.locManual && resolution?.gpsStatus === 'no_fix' && fixTimer;
-    $('step').innerHTML = `<h1>${s.editing ? 'Choose the location' : 'Where are you?'}</h1>
-      ${waiting ? '<p class="muted">Getting GPS position…</p>' : `<p class="muted">${esc(s.editing ? 'Select the turbine or vessel.' : resolution?.reason || 'Select the turbine or vessel.')}</p>`}
-      <div class="field"><input id="loc-filter" type="search" placeholder="Filter, e.g. A03" aria-label="Filter locations"></div>
-      <div class="pick-list" id="loc-list"></div>`;
-    $('loc-filter').oninput = fillPicker;
-    fillPicker();
-    nav({ hideBack: false });
-  },
-
-  f(key) {
-    const f = checkFields().find((x) => x.key === key);
-    const values = s.answers;
-    const forCube = s.pairing?.direction === 'forward' && ['known', 'scanned'].includes(s.partner.status);
-    const isBattery = /batter/i.test(f.key);
-    const about = forCube && !isBattery ? s.pairing.partnerType.name.toLowerCase() : s.type.name.toLowerCase();
+/** One question for a field: alarms, yes/no, a level, a choice or a typed value. */
+function fieldStep(f, values, about) {
+  const key = f.key;
+  const isBattery = /batter/i.test(key);
     if (f.type === 'multiselect') {
       const chosen = new Set(values[key] || []);
       $('step').innerHTML = `<h1>${esc(f.label)}</h1><p class="muted">Tick every alarm that is active. Leave all unticked if there are none.</p>
@@ -390,75 +406,139 @@ const STEPS = {
     $('btn-next').onclick = go1;
     $('in-field').onkeydown = (e) => { if (e.key === 'Enter') go1(); };
     $('in-field').focus();
+}
+
+
+const STEPS = {
+  location() {
+    refreshKnown();
+    if (!s.editing && s.loc) {
+      const warn = resolution?.requiresManual && s.loc !== HERE;
+      $('step').innerHTML = `<h1>Where are you?</h1>
+        <div class="loc-hero ${warn ? 'warn' : 'ok'}">
+          <div class="muted">${esc(locationStatus())}</div>
+          <div class="loc-name">${esc(locLabel(s.loc))}</div>
+          <div class="muted">${esc(resolution?.reason || '')}</div>
+        </div>
+        <button type="button" class="btn btn-primary btn-big" id="loc-confirm">Confirm</button>
+        <button type="button" class="btn btn-big" id="loc-edit" style="margin-top:10px">Edit</button>`;
+      $('loc-confirm').onclick = () => { s.locSource = s.loc === HERE || (!s.locManual && !resolution?.requiresManual) ? 'gps' : 'manual'; refreshKnown(); advance(); };
+      $('loc-edit').onclick = () => { s.editing = true; render(); };
+      nav({ hideBack: false });
+      return;
+    }
+    const waiting = !s.loc && !fix && 'geolocation' in navigator && !s.editing && !s.locManual && resolution?.gpsStatus === 'no_fix' && fixTimer;
+    $('step').innerHTML = `<h1>${s.editing ? 'Choose the location' : 'Where are you?'}</h1>
+      ${waiting ? '<p class="muted">Getting GPS position…</p>' : `<p class="muted">${esc(s.editing ? 'Select the turbine or vessel.' : resolution?.reason || 'Select the turbine or vessel.')}</p>`}
+      <div class="field"><input id="loc-filter" type="search" placeholder="Filter, e.g. A03" aria-label="Filter locations"></div>
+      <div class="pick-list" id="loc-list"></div>`;
+    $('loc-filter').oninput = fillPicker;
+    fillPicker();
+    nav({ hideBack: false });
   },
 
-  // ---- fuel cube, asked on the generator
-  'cube-known'() {
-    const p = s.known;
-    $('step').innerHTML = `<h1>Is the fuel cube still here?</h1>
-      <div class="partner-card"><b>${esc(partnerLabel(p))}</b><div class="muted">${p.tags[0] ? `tag ${esc(p.tags[0].code)}` : ''} · connected to this generator at ${esc(locLabel(s.loc))}</div></div>
-      <div class="choice-list"><button type="button" class="btn" id="cube-yes">Yes, it is connected</button><button type="button" class="btn" id="cube-no">No, it is not here</button></div>`;
-    $('cube-yes').onclick = () => { s.partner = { status: 'known', asset: p, code: p.tags[0]?.code ?? null }; s.answers[pairField().key] = true; advance(); };
-    $('cube-no').onclick = () => {
-      s.partner = { status: 'removed', asset: p, code: p.tags[0]?.code ?? null };
-      s.answers[pairField().key] = false;
+  f(key) {
+    const cube = connected().find((x) => /cube/i.test(x.partnerType.name));
+    const about = cube && /fuel/i.test(key) ? cube.partnerType.name.toLowerCase() : s.type.name.toLowerCase();
+    fieldStep(checkFields().find((x) => x.key === key), s.answers, about);
+  },
+
+  // A level of a connected unit, e.g. the battery level of the battery pack.
+  mf(slotKey, key) {
+    const sl = s.slots.find((x) => x.key === slotKey);
+    const t = typeOf(sl.asset);
+    s.memberAnswers[slotKey] ??= {};
+    fieldStep(t.fields.find((x) => x.key === key), s.memberAnswers[slotKey], t.name.toLowerCase());
+  },
+
+  // ---- units connected to the generator (fuel cube, battery pack), asked on the generator
+  known(key) {
+    const sl = s.slots.find((x) => x.key === key);
+    const p = sl.known;
+    const name = sl.partnerType.name.toLowerCase();
+    $('step').innerHTML = `<h1>Is the ${esc(name)} still here?</h1>
+      <div class="partner-card"><b>${esc(partnerLabel(p))}</b><div class="muted">${p.tags[0] ? `tag ${esc(p.tags[0].code)}` : ''} · connected to this ${esc(s.type.name.toLowerCase())} at ${esc(locLabel(s.loc))}</div></div>
+      ${blockedBy(p, typeOf(p)) ? `<div class="notice notice-danger">⛔ ${esc(blockedBy(p, typeOf(p)).text)}. It may not be used: tell the warehouse supervisor.</div>` : ''}
+      <div class="choice-list"><button type="button" class="btn" id="m-yes">Yes, it is connected</button><button type="button" class="btn" id="m-no">No, it is not here</button></div>`;
+    $('m-yes').onclick = () => { Object.assign(sl, { status: 'known', asset: p, code: p.tags[0]?.code ?? null }); s.answers[key] = true; advance(); };
+    $('m-no').onclick = () => {
+      Object.assign(sl, { status: 'removed', asset: p, code: p.tags[0]?.code ?? null });
+      s.answers[key] = false;
       if (sovs().length === 1) s.sov = sovs()[0];
       advance();
     };
     nav({});
   },
 
-  'cube-sov'() {
-    $('step').innerHTML = `<h1>Which vessel is it on?</h1><p class="muted">The fuel cube is moved back to the vessel.</p>
+  sov() {
+    $('step').innerHTML = `<h1>Which vessel is it on?</h1><p class="muted">The units that are not here are moved back to the vessel.</p>
       <div class="choice-list">${sovs().map((l) => `<button type="button" class="btn" data-id="${esc(l.id)}">${esc(l.name)}</button>`).join('')}</div>`;
     $('step').querySelectorAll('[data-id]').forEach((b) => (b.onclick = () => { s.sov = sovs().find((l) => l.id === b.dataset.id); advance(); }));
     nav({});
   },
 
-  'cube-ask'() {
-    const pt = s.pairing.partnerType.name.toLowerCase();
-    $('step').innerHTML = `<h1>${esc(pairField().label)}?</h1><p class="muted">Is a ${esc(pt)} connected to this ${esc(s.type.name.toLowerCase())}?</p>
+  ask(key) {
+    const sl = s.slots.find((x) => x.key === key);
+    const pt = sl.partnerType.name.toLowerCase();
+    $('step').innerHTML = `<h1>${esc(sl.field.label)}?</h1><p class="muted">Is a ${esc(pt)} connected to this ${esc(s.type.name.toLowerCase())}?</p>
       <div class="choice-list"><button type="button" class="btn" id="ask-yes">Yes</button><button type="button" class="btn" id="ask-no">No</button></div>`;
-    $('ask-yes').onclick = () => { s.partnerAnswer = true; s.answers[pairField().key] = true; advance(); };
-    $('ask-no').onclick = () => { s.partnerAnswer = false; s.partner = { status: 'none', asset: null, code: null }; s.answers[pairField().key] = false; advance(); };
+    $('ask-yes').onclick = () => { sl.answer = true; s.answers[key] = true; advance(); };
+    $('ask-no').onclick = () => { Object.assign(sl, { answer: false, status: 'none', asset: null, code: null }); s.answers[key] = false; advance(); };
     nav({});
   },
 
-  'cube-scan'() { partnerScan('forward'); },
+  scan(key) { partnerScan(s.slots.find((x) => x.key === key)); },
 
-  // ---- generator, asked on the fuel cube
-  'gen-known'() {
-    const p = s.known;
-    $('step').innerHTML = `<h1>Still connected to this generator?</h1>
-      <div class="partner-card"><b>${esc(partnerLabel(p))}</b><div class="muted">${p.tags[0] ? `tag ${esc(p.tags[0].code)}` : ''}</div></div>
-      <div class="choice-list"><button type="button" class="btn" id="gen-yes">Yes, it is connected</button><button type="button" class="btn" id="gen-no">No, not connected</button></div>`;
-    $('gen-yes').onclick = () => { s.partner = { status: 'known', asset: p, code: p.tags[0]?.code ?? null }; advance(); };
-    $('gen-no').onclick = () => { s.partner = { status: 'none', asset: null, code: null }; advance(); };
+  // ---- a connected unit scanned first: which generator is it connected to?
+  'anchor-known'() {
+    const p = s.anchor.known;
+    $('step').innerHTML = `<h1>Still connected to this ${esc(p ? typeOf(p).name.toLowerCase() : 'generator')}?</h1>
+      <div class="partner-card"><b>${esc(partnerLabel(p))}</b><div class="muted">${p.tags[0] ? `tag ${esc(p.tags[0].code)}` : ''} · at ${esc(locLabel(s.loc))}</div></div>
+      <p class="muted">The whole setup is checked in one go.</p>
+      <div class="choice-list"><button type="button" class="btn" id="a-yes">Yes, it is connected</button><button type="button" class="btn" id="a-no">No, not connected</button></div>`;
+    $('a-yes').onclick = () => becomeAnchor(p);
+    $('a-no').onclick = () => { s.anchor.status = 'declined'; advance(); };
     nav({});
   },
 
-  'gen-ask'() {
-    const pt = s.pairing.partnerType.name.toLowerCase();
+  'anchor-ask'() {
+    const pt = s.pairs.reverse.partnerType.name.toLowerCase();
     $('step').innerHTML = `<h1>Connected to a ${esc(pt)}?</h1>
       <div class="choice-list"><button type="button" class="btn" id="ask-yes">Yes, scan the ${esc(pt)}</button><button type="button" class="btn" id="ask-no">No</button></div>`;
-    $('ask-yes').onclick = () => { s.partnerAnswer = true; advance(); };
-    $('ask-no').onclick = () => { s.partnerAnswer = false; s.partner = { status: 'none', asset: null, code: null }; advance(); };
+    $('ask-yes').onclick = () => { s.anchor.answer = true; advance(); };
+    $('ask-no').onclick = () => { s.anchor = { status: 'declined', asset: null, code: null, answer: false, known: null }; advance(); };
     nav({});
   },
 
-  'gen-scan'() { partnerScan('reverse'); },
+  'anchor-scan'() { partnerScan('anchor'); },
+
+  // ---- back on the vessel the units are separate
+  return() {
+    const names = s.returnable.map((p) => `<li>${esc(partnerLabel(p))}${p.tags[0] ? ` <span class="muted">· tag ${esc(p.tags[0].code)}</span>` : ''}</li>`).join('');
+    $('step').innerHTML = `<h1>Did the rest of the setup come back too?</h1>
+      <p class="muted">The app has these together with this unit on a turbine:</p><ul class="steps">${names}</ul>
+      <div class="choice-list"><button type="button" class="btn" id="r-yes">Yes, move them to the vessel too</button><button type="button" class="btn" id="r-no">No, only this unit</button></div>`;
+    $('r-yes').onclick = () => { s.returning = 'yes'; advance(); };
+    $('r-no').onclick = () => { s.returning = 'no'; advance(); };
+    nav({});
+  },
 
   summary() {
     const { values } = collectValues();
-    const alerts = evaluateAlerts(s.type.fields, values);
+    const alerts = allAlerts(values);
     const rows = [['Equipment', kindOf(s.asset, s.type)], ['Location', locLabel(s.loc)]];
     for (const f of checkFields()) {
       if (values[f.key] === undefined && f.type === 'multiselect') { rows.push([f.label, 'None']); continue; }
       if (values[f.key] === undefined) continue;
       rows.push([f.label, formatValue(f, values[f.key])]);
     }
-    if (s.partner.status === 'known' || s.partner.status === 'scanned') rows.push([s.pairing.partnerType.name, partnerLabel(s.partner.asset)]);
-    if (s.partner.status === 'removed') rows.push([s.pairing.partnerType.name, 'Not here: moved to the vessel']);
+    for (const sl of s.slots) {
+      if (['known', 'scanned'].includes(sl.status)) {
+        rows.push(['Connected', partnerLabel(sl.asset)]);
+        for (const [k, v] of Object.entries(s.memberAnswers[sl.key] || {})) { const f = typeOf(sl.asset).fields.find((x) => x.key === k); if (f) rows.push([`${sl.partnerType.name}: ${f.label}`, formatValue(f, v)]); }
+      } else if (sl.status === 'removed') rows.push([sl.partnerType.name, 'Not here: moved to the vessel']);
+    }
+    if (s.returning === 'yes') rows.push(['Back on the vessel', s.returnable.map(partnerLabel).join(', ')]);
     $('step').innerHTML = `<h1>Ready to save</h1>
       ${alerts.length ? `<div class="notice notice-danger">${alerts.map((a) => `⚠ ${esc(a.text)}`).join('<br>')}</div>` : ''}
       <dl style="margin:0">${rows.map(([k, v]) => `<div class="sum-row"><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>
@@ -469,7 +549,6 @@ const STEPS = {
 };
 
 const locLabel = (l) => (l === HERE ? (fix ? `Here (${fix.lat.toFixed(4)}, ${fix.lon.toFixed(4)})` : 'Here (GPS position)') : l.kind === 'SOV' ? `${l.name} (vessel)` : l.name);
-const partnerLabel = (a) => (a ? kindOf(a, typeOf(a)) : s.pairing.partnerType.name);
 
 function locationStatus() {
   if (s.loc === HERE) return 'Away from the wind farm (testing)';
@@ -499,17 +578,19 @@ function fillPicker() {
     s.editing = false;
     refreshKnown();
     // A new location can change which questions apply.
-    if (s.partner.status === 'removed') s.partner = { status: 'none', asset: null, code: null };
+    for (const sl of s.slots) if (sl.status === 'removed') Object.assign(sl, { status: 'none', asset: null, code: null });
     advance();
   }));
 }
 
-/** Scan the other unit (the fuel cube, or the generator). */
-function partnerScan(direction) {
-  const pt = s.pairing.partnerType;
-  const owner = s.partner.status === 'scanned' ? s.partner : null;
-  $('step').innerHTML = `<h1>Scan the ${esc(pt.name.toLowerCase())}</h1>
-    <p class="muted">${direction === 'forward' ? `Scan the QR label on the ${esc(pt.name.toLowerCase())} connected to this ${esc(s.type.name.toLowerCase())}.` : `Scan the QR label on the ${esc(pt.name.toLowerCase())} this ${esc(s.type.name.toLowerCase())} is connected to.`}</p>
+/** Scan the other unit: a connected unit (slot) from the generator, or the generator ('anchor') from a connected unit. */
+function partnerScan(target) {
+  const toAnchor = target === 'anchor';
+  const pt = toAnchor ? s.pairs.reverse.partnerType : target.partnerType;
+  const owner = !toAnchor && target.status === 'scanned' ? target : null;
+  const ptName = pt.name.toLowerCase();
+  $('step').innerHTML = `<h1>Scan the ${esc(ptName)}</h1>
+    <p class="muted">${toAnchor ? `Scan the QR label on the ${esc(ptName)} this ${esc(s.type.name.toLowerCase())} is connected to.` : `Scan the QR label on the ${esc(ptName)} connected to this ${esc(s.type.name.toLowerCase())}.`}</p>
     ${owner ? `<div class="notice notice-ok">✓ ${esc(partnerLabel(owner.asset))}${owner.code ? ` · tag <b class="mono">${esc(owner.code)}</b>` : ''}</div>` : ''}
     <div class="field-error" id="scan-error"></div>
     <div class="stack">
@@ -522,27 +603,32 @@ function partnerScan(direction) {
     const code = parseTagText(raw);
     if (!code) return;
     const a = findAsset(code);
-    if (a && a.id === s.asset.id) { $('scan-error').textContent = `That is this ${s.type.name.toLowerCase()} itself. Scan the ${pt.name.toLowerCase()}.`; return; }
-    if (a && a.type_id !== pt.id) { $('scan-error').textContent = `That label is on a ${typeOf(a).name.toLowerCase()}. Scan the ${pt.name.toLowerCase()}.`; return; }
+    if (a && a.id === s.asset.id) { $('scan-error').textContent = `That is this ${s.type.name.toLowerCase()} itself. Scan the ${ptName}.`; return; }
+    if (a && a.type_id !== pt.id) { $('scan-error').textContent = `That label is on a ${typeOf(a).name.toLowerCase()}. Scan the ${ptName}.`; return; }
     if (!a) { $('scan-error').textContent = 'That label is not registered in this project.'; return; }
-    s.partner = { status: 'scanned', asset: a, code };
-    s.issues = s.issues.filter((i) => i.issue_type !== 'cube_conflict');
-    // Another unit already linked to it at this very location: two claim the same one.
-    const st = a.state;
-    if (st?.linked_asset_id && st.linked_asset_id !== s.asset.id && s.loc && s.loc !== HERE && st.location_id === s.loc.id) {
-      const other = ref.assets.find((x) => x.id === st.linked_asset_id);
-      if (other?.state?.linked_asset_id === a.id) {
-        const cube = direction === 'forward' ? a : s.asset;
-        const gen = direction === 'forward' ? s.asset : a;
-        s.issues.push({ issue_type: 'cube_conflict', asset_id: cube.id, related_asset_id: gen.id, note: `The app also has it connected to ${other.serial}.` });
+    if (navigator.vibrate) navigator.vibrate(80);
+    if (toAnchor) { s.anchor = { status: 'scanned', asset: a, code, answer: true, known: null }; becomeAnchor(a); return; }
+    const blocked = blockedBy(a, typeOf(a));
+    if (blocked) { $('scan-error').textContent = `${partnerLabel(a)}: ${blocked.text}. It may not be used.`; }
+    Object.assign(target, { status: 'scanned', asset: a, code });
+    s.issues = s.issues.filter((i) => !(i.issue_type === 'cube_conflict' && i.asset_id === a.id));
+    // Another unit already has it connected at this very location: two claim the same one.
+    const st = lastState(a.id, ref.assets, pending);
+    if (s.loc && s.loc !== HERE && st?.location_id === s.loc.id) {
+      const other = st.linked_asset_ids.map((id) => ref.assets.find((x) => x.id === id)).find((x) => x && x.id !== s.asset.id && x.type_id === s.asset.type_id);
+      if (other && lastState(other.id, ref.assets, pending)?.linked_asset_ids.includes(a.id)) {
+        s.issues.push({ issue_type: 'cube_conflict', asset_id: a.id, related_asset_id: s.asset.id, note: `The app also has it connected to ${other.serial}.` });
       }
     }
-    if (navigator.vibrate) navigator.vibrate(80);
     render();
   };
   $('p-scan').onclick = async () => { const t = await scanQr(); if (t) accept(t); };
   $('p-type').onclick = () => { const c = prompt('Code printed under the QR label:'); if (c) accept(c); };
-  $('p-skip').onclick = () => { s.partner = { status: 'skipped', asset: null, code: null }; advance(); };
+  $('p-skip').onclick = () => {
+    if (toAnchor) s.anchor = { status: 'declined', asset: null, code: null, answer: false, known: null };
+    else Object.assign(target, { status: 'skipped', asset: null, code: null });
+    advance();
+  };
   if ($('p-nfc')) {
     $('p-nfc').onclick = async () => {
       const ctrl = new AbortController();
@@ -561,6 +647,21 @@ function partnerScan(direction) {
 function collectValues() {
   const raw = applyLocationRules(s.type.fields, s.answers, s.loc?.kind);
   return normalizeValues(s.type.fields, 'check', raw);
+}
+
+/** Warnings for this unit and for the connected units' own levels (a low battery pack). */
+function allAlerts(values) {
+  const out = [...evaluateAlerts(s.type.fields, values)];
+  for (const sl of connected()) out.push(...evaluateAlerts(typeOf(sl.asset).fields, s.memberAnswers[sl.key] || {}));
+  return out;
+}
+
+/** The check values for a connected unit: the levels this unit reports for both (fuel), plus its own. */
+function memberValues(sl, values) {
+  const t = typeOf(sl.asset);
+  const keys = new Set(t.fields.filter((f) => f.scope === 'check').map((f) => f.key));
+  const raw = { ...Object.fromEntries(Object.entries(values).filter(([k]) => keys.has(k))), ...(s.memberAnswers[sl.key] || {}) };
+  return normalizeValues(t.fields, 'check', raw).values;
 }
 
 function locFields() {
@@ -594,37 +695,36 @@ async function save() {
   });
   items.push(main);
 
-  const partner = s.partner;
-  const pt = s.pairing?.partnerType;
-  if (s.pairing?.direction === 'forward' && (partner.status === 'known' || partner.status === 'scanned')) {
-    // The fuel cube is here, connected to this generator, at the level just entered.
-    main.linked_asset_id = partner.asset?.id ?? null;
-    main.linked_tag_code = partner.code;
-    const cubeKeys = new Set(pt.fields.filter((f) => f.scope === 'check').map((f) => f.key));
-    items.push(item({
-      kind: 'check', asset_id: partner.asset?.id ?? null, tag_code: partner.code, ...place,
-      data: Object.fromEntries(Object.entries(values).filter(([k]) => cubeKeys.has(k))),
-      linked_asset_id: s.asset.id, linked_tag_code: s.code,
-      label: `${partnerLabel(partner.asset)} · tag ${partner.code} @ ${where} (with generator)`,
-    }));
-  } else if (s.pairing?.direction === 'forward' && partner.status === 'removed') {
-    // Reported not here: the fuel cube goes back to the vessel without a reading, and the
-    // warehouse supervisor is told, because the app expected it here.
-    if (s.sov) {
+  const conn = connected();
+  if (conn.length) {
+    // Everything on the turbine is saved together: this unit and each unit connected to it, all linked.
+    const ids = conn.map((c) => c.asset.id);
+    main.linked_asset_ids = ids;
+    for (const c of conn) {
       items.push(item({
-        kind: 'move', asset_id: partner.asset.id, tag_code: partner.code, location_id: s.sov.id, location_source: 'manual', gps_status: 'unavailable',
-        label: `${partnerLabel(partner.asset)} · tag ${partner.code} moved to ${s.sov.name}`,
+        kind: 'check', asset_id: c.asset.id, tag_code: c.code, ...place, data: memberValues(c, values),
+        linked_asset_ids: [s.asset.id, ...ids.filter((i) => i !== c.asset.id)],
+        label: `${partnerLabel(c.asset)} · tag ${c.code} @ ${where} (with ${s.type.name.toLowerCase()})`,
       }));
     }
-    s.issues.push({ issue_type: 'cube_missing', asset_id: partner.asset.id, related_asset_id: s.asset.id });
-  } else if (s.pairing?.direction === 'reverse' && (partner.status === 'known' || partner.status === 'scanned')) {
-    main.linked_asset_id = partner.asset?.id ?? null;
-    main.linked_tag_code = partner.code;
-    if (partner.status === 'scanned') {
-      // The generator is now known to be here, connected to this fuel cube.
+  }
+  for (const sl of s.slots.filter((x) => x.status === 'removed')) {
+    // Reported not here: it goes back to the vessel without a reading, and the warehouse supervisor
+    // is told, because the app expected it here.
+    if (s.sov) {
       items.push(item({
-        kind: 'move', asset_id: partner.asset?.id ?? null, tag_code: partner.code, ...place, linked_asset_id: s.asset.id, linked_tag_code: s.code,
-        label: `${partnerLabel(partner.asset)} · tag ${partner.code} @ ${where} (with fuel cube)`,
+        kind: 'move', asset_id: sl.asset.id, tag_code: sl.code, location_id: s.sov.id, location_source: 'manual', gps_status: 'unavailable',
+        label: `${partnerLabel(sl.asset)} · tag ${sl.code} moved to ${s.sov.name}`,
+      }));
+    }
+    s.issues.push({ issue_type: 'cube_missing', asset_id: sl.asset.id, related_asset_id: s.asset.id });
+  }
+  if (s.returning === 'yes') {
+    // The rest of the setup came back to the vessel with this unit: they are separate items again.
+    for (const p of s.returnable) {
+      items.push(item({
+        kind: 'move', asset_id: p.id, tag_code: p.tags[0]?.code ?? null, ...place,
+        label: `${partnerLabel(p)} · tag ${p.tags[0]?.code ?? ''} back on ${where}`,
       }));
     }
   }
@@ -637,7 +737,7 @@ async function save() {
     if (it.asset_id && (it.kind === 'check' || it.kind === 'move')) rememberState(it);
   }
   cache.set(`bootstrap:${SLUG}`, ref).catch(() => {});
-  const alerts = evaluateAlerts(s.type.fields, values);
+  const alerts = allAlerts(values);
   toast(alerts.length ? `Saved. Warning: ${alerts.map((a) => a.text).join('; ')}` : 'Saved', alerts.length ? 'error' : 'ok');
   leaveFlow();
   renderOutbox();
@@ -649,7 +749,7 @@ async function save() {
 function rememberState(r) {
   const a = ref.assets.find((x) => x.id === r.asset_id);
   if (a && (!a.state || r.recorded_at >= a.state.at)) {
-    a.state = { location_id: r.location_id, linked_asset_id: r.linked_asset_id ?? null, at: r.recorded_at };
+    a.state = { location_id: r.location_id, linked_asset_ids: r.linked_asset_ids ?? [], at: r.recorded_at };
   }
 }
 

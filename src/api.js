@@ -65,8 +65,15 @@ function assetOut(a) {
   };
 }
 
+/** The units a reading was connected to, as a list (older readings only have one). */
+function linkedIdsOf(r) {
+  const ids = parseJsonColumn(r.linked_asset_ids, null);
+  return ids || (r.linked_asset_id ? [r.linked_asset_id] : []);
+}
+
 function readingOut(r) {
-  return { ...r, data: parseJsonColumn(r.data, {}) };
+  const ids = parseJsonColumn(r.linked_asset_ids, null);
+  return { ...r, data: parseJsonColumn(r.data, {}), linked_asset_ids: ids || (r.linked_asset_id ? [r.linked_asset_id] : []) };
 }
 
 const ASSET_SELECT = `
@@ -344,8 +351,8 @@ P('GET', '/bootstrap', async ({ env, user, project }) => {
     env.DB.prepare(`${ASSET_SELECT} WHERE a.status = 'active' AND a.project_id = ? ORDER BY a.serial`).bind(project.id),
     // Where each unit was last seen and what it was connected to, so the phone
     // knows offline whether a generator and fuel cube are already together.
-    env.DB.prepare(`SELECT asset_id, location_id, linked_asset_id, recorded_at FROM (
-      SELECT r.asset_id, r.location_id, r.linked_asset_id, r.recorded_at,
+    env.DB.prepare(`SELECT asset_id, location_id, linked_asset_id, linked_asset_ids, recorded_at FROM (
+      SELECT r.asset_id, r.location_id, r.linked_asset_id, r.linked_asset_ids, r.recorded_at,
         ROW_NUMBER() OVER (PARTITION BY r.asset_id ORDER BY r.recorded_at DESC, r.received_at DESC) AS rn
       FROM readings r JOIN assets a ON a.id = r.asset_id
       WHERE a.project_id = ? AND r.kind IN ('check', 'move')) WHERE rn = 1`).bind(project.id),
@@ -368,7 +375,7 @@ P('GET', '/bootstrap', async ({ env, user, project }) => {
     locations: locations.results.map((l) => (l.kind === 'WTG' ? { ...l, radius_m: project.gps_radius_m } : l)),
     assets: assets.results.map((a) => {
       const st = stateOf.get(a.id);
-      return { ...assetOut(a), state: st ? { location_id: st.location_id, linked_asset_id: st.linked_asset_id, at: st.recorded_at } : null };
+      return { ...assetOut(a), state: st ? { location_id: st.location_id, linked_asset_ids: linkedIdsOf(st), at: st.recorded_at } : null };
     }),
   });
 });
@@ -533,7 +540,7 @@ P('GET', '/assets', async ({ env, user, url, project }) => {
       (SELECT group_concat(t.code || char(30) || t.kind, char(31)) FROM tags t WHERE t.asset_id = a.id) AS tag_codes,
       l.id AS r_id, l.recorded_at AS r_recorded_at, l.location_id AS r_location_id, l.location_source AS r_location_source,
       l.gps_status AS r_gps_status, l.lat AS r_lat, l.lon AS r_lon, l.accuracy_m AS r_accuracy_m, l.data AS r_data,
-      l.notes AS r_notes, l.kind AS r_kind, l.linked_asset_id AS r_linked_asset_id,
+      l.notes AS r_notes, l.kind AS r_kind, l.linked_asset_id AS r_linked_asset_id, l.linked_asset_ids AS r_linked_asset_ids,
       c.recorded_at AS c_recorded_at, c.data AS c_data,
       rf.recorded_at AS f_refueled_at, sv.recorded_at AS f_serviced_at,
       loc.name AS r_location_name, loc.kind AS r_location_kind, loc.lat AS r_location_lat, loc.lon AS r_location_lon
@@ -864,11 +871,14 @@ P('POST', '/readings/sync', async ({ request, env, user, project }) => {
         values = result.values;
       }
       // The unit it was connected to (e.g. the fuel cube on this generator), by id or scanned label.
-      const linked = findAsset(raw.linked_asset_id, raw.linked_tag_code);
+      // A setup has several units (generator, battery pack, fuel cube): a list of ids, or the older single one.
+      const wanted = [...(Array.isArray(raw.linked_asset_ids) ? raw.linked_asset_ids.slice(0, 10) : []), raw.linked_asset_id].filter(Boolean);
+      const linkedIds = [...new Set(wanted.map((x) => findAsset(x)?.id).filter((x) => x && x !== asset.id))];
+      if (!linkedIds.length) { const one = findAsset(null, raw.linked_tag_code); if (one && one.id !== asset.id) linkedIds.push(one.id); }
       stmts.push(env.DB.prepare(
         `INSERT OR IGNORE INTO readings
-          (id, asset_id, recorded_at, user_id, location_id, location_source, gps_status, lat, lon, accuracy_m, distance_m, data, notes, tag_code, kind, linked_asset_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, asset_id, recorded_at, user_id, location_id, location_source, gps_status, lat, lon, accuracy_m, distance_m, data, notes, tag_code, kind, linked_asset_id, linked_asset_ids)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         id, asset.id, at, user.id, raw.location_id || null,
         raw.location_source === 'gps' ? 'gps' : 'manual',
@@ -876,7 +886,7 @@ P('POST', '/readings/sync', async ({ request, env, user, project }) => {
         num(raw.lat, { min: -90, max: 90, name: 'lat' }), num(raw.lon, { min: -180, max: 180, name: 'lon' }),
         num(raw.accuracy_m, { min: 0, name: 'accuracy' }), num(raw.distance_m, { min: 0, name: 'distance' }),
         JSON.stringify(values), str(raw.notes, { max: 2000, name: 'notes' }), str(raw.tag_code, { max: 120 }),
-        kind, linked && linked.id !== asset.id ? linked.id : null,
+        kind, linkedIds[0] ?? null, linkedIds.length ? JSON.stringify(linkedIds) : null,
       ));
       pending.push({ id });
     } catch (e) {

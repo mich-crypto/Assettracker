@@ -197,7 +197,7 @@ function renderList() {
     `<td><b>${esc(a.kind)}</b></td><td class="mono">${esc(a.serial)}</td><td>${fuelCell(a)}</td><td>${statusCell(a)}</td>`)).join('')
     || `<tr><td colspan="4" class="muted">${onSov.length ? 'Nothing matches.' : 'Nothing on the SOV.'}</td></tr>`;
   $('rows-wtg').innerHTML = applyFilters(groupPairs(onWtg), barWtg.state()).map((a) => row(a,
-    `<td class="wtg-name">${esc(a.last.location_name)}</td><td><b>${kindLine(a)}</b></td><td class="mono">${esc(a.serial)}${a.partner ? `<div class="muted">${esc(a.partner.serial)}</div>` : ''}</td><td>${fuelCell(a)}</td><td>${statusCell(a)}</td>`)).join('')
+    `<td class="wtg-name">${esc(a.last.location_name)}</td><td><b>${kindLine(a)}</b></td><td class="mono">${esc(a.serial)}${(a.partners || []).map((p) => `<div class="muted">${esc(p.serial)}</div>`).join('')}</td><td>${fuelCell(a)}</td><td>${statusCell(a)}</td>`)).join('')
     || `<tr><td colspan="5" class="muted">${onWtg.length ? 'Nothing matches.' : 'Nothing on turbines.'}</td></tr>`;
   $('card-none').classList.toggle('hidden', !none.length);
   $('rows-none').innerHTML = none.map((a) => row(a, `<td><b>${esc(a.kind)}</b></td><td class="mono">${esc(a.serial)}</td><td>${label(a)}</td><td>${statusCell(a)}</td>`)).join('');
@@ -255,7 +255,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('drawer'
 // ---------------------------------------------------------------- things to investigate
 
 const ISSUE_TITLE = {
-  cube_missing: 'Fuel cube reported missing',
+  cube_missing: 'Connected unit reported missing',
   cube_conflict: 'Fuel cube claimed by two generators',
   label_mismatch: 'Label does not match the equipment',
   unknown_tag: 'Label not registered',

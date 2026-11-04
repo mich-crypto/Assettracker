@@ -37,6 +37,19 @@ An unknown label can be reported too. These end up under **Warehouse → To inve
 
 The first time, a three-card introduction explains the steps.
 
+## Hybrid setups: generator, battery pack and fuel cube
+
+A hybrid setup is three units with their own labels: the **hybrid generator**, a **battery pack** and a **fuel cube**. On a turbine they are
+always together; on the SOV they are separate items.
+
+* **One scan checks the whole setup.** Scan any of the three on a turbine: the app finds the generator and asks about the others
+  ("still here?", battery level, fuel level). Everything is saved together, each unit with its own reading, all linked.
+* A new setup is built by scanning the generator and answering *Fuel cube connected / Battery pack connected* (then scan each).
+* On the SOV nothing is linked. Scanning a unit there asks whether the rest of the setup came back with it, and moves them if so.
+* A unit that is not on the turbine any more goes back to the SOV and appears under *To investigate*.
+* In the lists a turbine shows one line, for example *Hybrid generator 350 kVA + Battery pack + Fuel cube Large*, with fuel and battery.
+  The SOV list shows every unit separately. A defect in any unit makes the line red and names the unit.
+
 ## Defect and blocked equipment
 
 Equipment can be marked **defect** (when scanning, under *Something is wrong*, or in the warehouse under *Scan equipment*) and set back with *Repaired*.
@@ -123,7 +136,7 @@ The D1 database `assetdatabase` is configured in `wrangler.jsonc`.
 ```bash
 npm install
 npx wrangler login
-npm run db:migrate:remote        # applies migrations 0001 ... 0012
+npm run db:migrate:remote        # applies migrations 0001 ... 0014
 npm run deploy
 ```
 

@@ -133,12 +133,8 @@ function checkedCell(a) {
   return a.check ? esc(ago(a.check.recorded_at)) : '<span class="muted">not scanned</span>';
 }
 
-function movedTag(a) {
-  // Connected unit (e.g. generator <-> fuel cube), if both are still at the same place.
-  const partner = a.last?.linked_asset_id && assets.find((x) => x.id === a.last.linked_asset_id);
-  const together = partner && partner.last?.linked_asset_id === a.id && partner.last?.location_id === a.last.location_id;
-  const link = together ? `<div class="muted moved-tag">⛓ with ${esc(kindOf(partner))}</div>` : '';
-  return link;
+function movedTag() {
+  return '';
 }
 
 function sourceBadge(r) {
