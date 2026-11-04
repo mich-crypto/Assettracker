@@ -34,6 +34,18 @@
       </div>
     </section>
 
+    <!-- equipment that may not be used -->
+    <section class="hidden" id="view-blocked">
+      <div class="blocked" role="alert">
+        <div class="blocked-ico" aria-hidden="true">⛔</div>
+        <h1>Do not use</h1>
+        <p class="blocked-what" id="blocked-what"></p>
+        <p class="blocked-why" id="blocked-why"></p>
+        <p>Tell the warehouse supervisor.</p>
+      </div>
+      <button class="btn btn-big" type="button" id="blocked-back">Back</button>
+    </section>
+
     <!-- the guided questions -->
     <section class="hidden" id="view-flow">
       <div class="wizard-progress" id="progress" aria-hidden="true"></div>
@@ -63,6 +75,7 @@
     <div class="field"><label for="problem-note">What did you see? <span class="muted">(optional)</span></label><textarea id="problem-note" maxlength="500" placeholder="e.g. serial on the nameplate is 120045"></textarea></div>
     <div class="stack">
       <button type="button" class="btn btn-primary btn-big" id="problem-send">Tell the warehouse supervisor</button>
+      <button type="button" class="btn btn-danger btn-big hidden" id="problem-defect">This equipment is defect</button>
       <a class="btn btn-big hidden" id="problem-add" href="#">Add this equipment now</a>
       <button type="button" class="btn" id="problem-cancel">Cancel</button>
     </div>

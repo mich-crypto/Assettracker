@@ -23,3 +23,20 @@ export function alertsFor(asset, type, today = new Date()) {
   const fromCheck = asset.check ? evaluateAlerts(type.fields, asset.check.data) : [];
   return [...fromCheck, ...evaluateDueAlerts(type.fields, asset.attributes, today)];
 }
+
+/**
+ * Why a unit may not be used, or null. Two reasons: it was marked defect, or a date marked
+ * "due" (the lifting points inspection) has passed.
+ */
+export function blockedBy(asset, type, today = new Date()) {
+  if (asset.defect) return { kind: 'defect', text: asset.defect_note ? `Defect: ${asset.defect_note}` : 'Marked as defect', short: 'Defect' };
+  const late = evaluateDueAlerts(type.fields, asset.attributes, today).find((a) => a.days < 0);
+  if (late) return { kind: 'expired', text: late.text, short: 'Inspection overdue' };
+  return null;
+}
+
+/** 'blocked' (red), 'warning' (orange) or 'ok'. */
+export function conditionOf(asset, type, today = new Date()) {
+  if (blockedBy(asset, type, today)) return 'blocked';
+  return alertsFor(asset, type, today).length ? 'warning' : 'ok';
+}

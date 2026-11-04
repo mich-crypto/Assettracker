@@ -755,6 +755,15 @@ P('POST', '/readings/sync', async ({ request, env, user, project }) => {
               .bind(next, at, asset.id));
             pending.push(null);
           }
+        } else if (raw.event === 'defect' || raw.event === 'repaired') {
+          // Equipment that cannot be used (defect) or is usable again (repaired). The newest event wins,
+          // so late or repeated uploads from phones that were offline cannot undo a newer one.
+          const note = raw.event === 'defect' ? str(raw.notes, { max: 300 }) : null;
+          data = { event: raw.event, ...(note ? { note } : {}) };
+          stmts.push(env.DB.prepare(
+            'UPDATE assets SET defect = ?, defect_note = ?, defect_at = ?, updated_at = ? WHERE id = ? AND (defect_at IS NULL OR defect_at <= ?)',
+          ).bind(raw.event === 'defect' ? 1 : 0, note, at, at, asset.id, at));
+          pending.push(null);
         } else { reject('Unknown event'); continue; }
         stmts.push(env.DB.prepare(
           `INSERT OR IGNORE INTO readings (id, asset_id, recorded_at, user_id, location_source, gps_status, data, notes, tag_code, kind)

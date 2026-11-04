@@ -8,7 +8,7 @@ import {
   SLUG, ago, api, esc, loadReference, path, registerServiceWorker, renderHeader, requireProject,
   startAutoSync, syncNow, toast, updateSyncPill,
 } from './app.js';
-import { kindOf, typeById } from './equipment.js';
+import { blockedBy, kindOf, typeById } from './equipment.js';
 import { applyLocationRules, evaluateAlerts, fixedAt, formatValue, normalizeValues } from './fields.js';
 import { distanceM, resolveLocation } from './geo.js';
 import { knownPartner, pairingFor } from './pairing.js';
@@ -56,6 +56,8 @@ async function init() {
   $('btn-problem').onclick = () => openProblem('label_mismatch');
   $('problem-cancel').onclick = () => $('problem').close();
   $('problem-send').onclick = sendProblem;
+  $('problem-defect').onclick = sendDefect;
+  $('blocked-back').onclick = leaveFlow;
   window.addEventListener('at:outbox', renderOutbox);
   window.addEventListener('hashchange', openFromHash);
   openFromHash();
@@ -185,6 +187,8 @@ async function openCode(raw) {
 
 function startScan(asset, code) {
   const type = typeOf(asset);
+  const block = blockedBy(asset, type);
+  if (block) { showBlocked(asset, type, block); return; }
   s = {
     asset, type, code, loc: null, locManual: false, editing: false, locSource: 'gps',
     answers: {}, pairing: pairingFor(ref.types, type), known: null,
@@ -201,7 +205,19 @@ function startScan(asset, code) {
   go('location');
 }
 
+/** Defect or inspection overdue: the equipment may not be used, so no questions are asked. */
+function showBlocked(asset, type, block) {
+  $('blocked-what').textContent = `${kindOf(asset, type)} · ${asset.serial}`;
+  $('blocked-why').textContent = block.text;
+  $('view-home').classList.add('hidden');
+  $('view-flow').classList.add('hidden');
+  $('view-blocked').classList.remove('hidden');
+  window.scrollTo(0, 0);
+  navigator.vibrate?.([200, 100, 200]);
+}
+
 function leaveFlow() {
+  $('view-blocked').classList.add('hidden');
   clearTimeout(fixTimer);
   s = null;
   trail = [];
@@ -651,8 +667,24 @@ function openProblem(kind, code = null) {
     : 'The label does not match the equipment, the serial number is different, or something else is not right. The warehouse supervisor will look into it.';
   $('problem-note').value = '';
   $('problem-add').classList.toggle('hidden', !unknown);
+  $('problem-defect').classList.toggle('hidden', unknown || !s?.asset);
   $('problem-add').href = `${path('add')}#t=${encodeURIComponent(problemCode || '')}`;
   $('problem').showModal();
+}
+
+async function sendDefect() {
+  const note = $('problem-note').value.trim() || null;
+  const a = s.asset;
+  await outbox.put(item({ kind: 'event', event: 'defect', asset_id: a.id, tag_code: s.code, notes: note, label: `Defect: ${a.serial}` }));
+  // The phone knows at once, even before it is synced.
+  a.defect = 1; a.defect_note = note; a.defect_at = new Date().toISOString();
+  cache.set(`bootstrap:${SLUG}`, ref).catch(() => {});
+  $('problem').close();
+  toast('Marked as defect. The warehouse supervisor is told.', 'ok');
+  leaveFlow();
+  renderOutbox();
+  updateSyncPill();
+  if (navigator.onLine !== false) syncNow();
 }
 
 async function sendProblem() {
