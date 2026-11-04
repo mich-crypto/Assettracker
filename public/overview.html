@@ -12,57 +12,37 @@
 <body>
   <main>
     <div class="row" style="justify-content:space-between;margin-bottom:12px">
-      <h1 style="margin:0">Equipment overview</h1>
+      <h1 style="margin:0">Overview</h1>
       <div class="row">
         <span class="muted" id="updated"></span>
-        <button class="btn" id="btn-csv" type="button">Export readings (CSV)</button>
+        <button class="btn" id="btn-paper" type="button">Paper list (PDF)</button>
       </div>
     </div>
     <div class="kpis" id="kpis"></div>
 
-    <form class="card assign" id="assign-form" autocomplete="off">
-      <h2>Assign a location</h2>
-      <div class="row">
-        <div class="field grow"><label for="as-serial">Serial number</label>
-          <input id="as-serial" list="serial-list" type="text" autocapitalize="characters" placeholder="Type or pick a serial number" required>
-          <datalist id="serial-list"></datalist>
-        </div>
-        <div class="field grow"><label for="as-location">Location</label>
-          <select id="as-location" required></select>
-        </div>
-        <div class="field"><button class="btn btn-primary" type="submit" id="as-save">Assign</button></div>
-      </div>
-      <p class="muted" id="as-hint" aria-live="polite"></p>
-    </form>
-
-    <label class="row" style="gap:6px;margin:0 0 12px"><input type="checkbox" id="f-alert"> Show only equipment with a warning <span class="warn-sym" aria-hidden="true">⚠</span></label>
-
     <section class="card">
-      <div class="section-head">
-        <h2>On the vessel</h2>
-        <input id="q-sov" type="search" placeholder="Search equipment on the vessel" aria-label="Search equipment on the vessel">
-      </div>
+      <div class="section-head"><h2>SOV</h2></div>
+      <div id="bar-sov"></div>
       <div class="table-wrap"><table class="unit-table">
-        <thead><tr><th>Equipment</th><th>Fuel</th><th class="c-warn"><span aria-hidden="true">⚠</span><span class="sr-only">Warning</span></th><th>Last check</th></tr></thead>
+        <thead><tr><th>Equipment</th><th>Fuel</th><th>Status</th><th>Last check</th></tr></thead>
         <tbody id="sov-rows"></tbody>
       </table></div>
     </section>
 
     <section class="card">
-      <div class="section-head">
-        <h2>On turbines</h2>
-        <input id="q-wtg" type="search" placeholder="Find a WTG or equipment" aria-label="Find a WTG or equipment">
-      </div>
-      <div class="table-wrap"><table class="unit-table" id="wtg-table">
-        <thead><tr><th>WTG</th><th>Equipment</th><th>Fuel</th><th class="c-warn"><span aria-hidden="true">⚠</span><span class="sr-only">Warning</span></th><th>Last check</th></tr></thead>
+      <div class="section-head"><h2>Turbines</h2></div>
+      <div id="bar-wtg"></div>
+      <div class="table-wrap"><table class="unit-table">
+        <thead><tr><th>WTG</th><th>Equipment</th><th>Fuel</th><th>Status</th><th>Last check</th></tr></thead>
+        <tbody id="wtg-rows"></tbody>
       </table></div>
     </section>
 
     <div class="card"><div id="map" role="region" aria-label="Map of equipment on turbines"></div></div>
 
     <details class="card report" id="svc-card">
-      <summary><b>Service report</b> <span class="muted" id="svc-count"></span> <span class="muted">· lifting points inspections and alarms</span></summary>
-      <div class="row report-tools"><button class="btn" type="button" id="svc-copy">Copy as text</button><button class="btn" type="button" id="svc-csv">Download CSV</button><button class="btn" type="button" id="svc-print">Print</button></div>
+      <summary><b>Service report</b> <span class="muted" id="svc-count"></span> <span class="muted">· defects, inspections and alarms</span></summary>
+      <div class="row report-tools"><button class="btn" type="button" id="svc-copy">Copy as text</button></div>
       <div class="table-wrap"><table class="unit-table"><thead><tr><th>Location</th><th>Equipment</th><th>Needs</th><th>Last serviced</th></tr></thead><tbody id="svc-rows"></tbody></table></div>
     </details>
 
@@ -71,21 +51,12 @@
       <div class="row report-tools">
         <label for="fuel-max">Fuel level at or below</label>
         <select id="fuel-max"><option value="25">25 %</option><option value="50" selected>50 %</option><option value="75">75 %</option></select>
-        <button class="btn" type="button" id="fuel-copy">Copy as text</button><button class="btn" type="button" id="fuel-print">Print</button>
+        <button class="btn" type="button" id="fuel-copy">Copy as text</button>
       </div>
       <div class="table-wrap"><table class="unit-table"><thead><tr><th>Turbine</th><th>Equipment</th><th>Fuel</th><th>Last check</th></tr></thead><tbody id="fuel-rows"></tbody></table></div>
     </details>
 
-    <section id="elsewhere-section" class="hidden">
-      <h2 style="margin-top:20px">Elsewhere</h2>
-      <p class="muted" style="margin-top:-6px">Scanned away from the wind farm (on shore, in transit), at the phone's GPS position.</p>
-      <div class="loc-grid" id="elsewhere-cards"></div>
-    </section>
-
-    <details class="card" id="unplaced" style="margin-top:16px">
-      <summary><b>Not yet scanned at a location</b> <span class="muted" id="unplaced-count"></span></summary>
-      <div id="unplaced-list" style="margin-top:10px"></div>
-    </details>
+    <div class="paper" id="paper"></div>
   </main>
   <aside class="drawer hidden" id="drawer" aria-labelledby="d-title"></aside>
   <script src="/vendor/leaflet/leaflet.js"></script>

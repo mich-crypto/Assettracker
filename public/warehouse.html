@@ -15,48 +15,57 @@
     <section id="view-home">
       <h1>Warehouse</h1>
       <nav class="tile-grid" aria-label="Warehouse actions">
-        <a class="tile tile-primary" id="t-add" href="#"><b>Add equipment</b><span>New generator or fuel cube, step by step</span></a>
-        <a class="tile" href="#refuel"><b>Refuelled</b><span>Scan and confirm a fuel cube or generator is full</span></a>
-        <a class="tile" href="#service"><b>Serviced</b><span>Lifting points inspected: set the next date</span></a>
-        <a class="tile" href="#issues"><b>To investigate</b><span id="issue-count">Things technicians reported</span></a>
-        <a class="tile" href="#list"><b>Equipment list</b><span>Find, edit, retire, attach a label</span></a>
-        <a class="tile" href="#import"><b>Import from Excel</b><span>Register the existing fleet in one go</span></a>
+        <a class="tile tile-primary" id="t-add" href="#"><b>Add equipment</b></a>
+        <a class="tile" href="#scan"><b>Scan equipment</b><span>Refuelled, serviced, defect</span></a>
+        <a class="tile" href="#list"><b>Equipment list</b></a>
+        <a class="tile" href="#issues"><b>To investigate</b><span id="issue-count"></span></a>
+        <a class="tile" href="#import"><b>Import from Excel</b></a>
       </nav>
-      <section class="card" id="due-card">
-        <div class="section-head"><h2>Needs service</h2><a class="btn" id="due-more" href="#">Full report</a></div>
-        <div id="due-list"></div>
-      </section>
     </section>
 
-    <!-- refuelled / serviced -->
+    <!-- scan equipment: refuelled, serviced, defect -->
     <section class="hidden" id="view-action">
       <p><a href="#" class="back-link">← Warehouse</a></p>
-      <h1 id="act-title"></h1>
+      <h1>Scan equipment</h1>
       <div class="card stack" id="act-pick">
         <button class="btn btn-primary btn-big" type="button" id="act-scan">Scan QR code</button>
         <div class="field"><label for="act-serial">…or choose by serial number</label>
           <input id="act-serial" list="act-serials" type="text" autocapitalize="characters" autocomplete="off" placeholder="Type a serial number"><datalist id="act-serials"></datalist></div>
         <div class="field-error" id="act-error"></div>
       </div>
-      <form class="card stack hidden" id="act-confirm" autocomplete="off">
+      <div class="card stack hidden" id="act-confirm">
         <div><h2 id="act-kind" style="margin:0"></h2><div class="muted" id="act-sub"></div></div>
-        <div id="act-service" class="hidden">
+        <div id="act-state"></div>
+        <div class="stack" id="act-buttons">
+          <button class="btn btn-primary btn-big" type="button" data-do="refuel">Refuelled (full)</button>
+          <button class="btn btn-big" type="button" data-do="service">Serviced</button>
+          <button class="btn btn-big btn-danger" type="button" data-do="defect">Defect, cannot be used</button>
+          <button class="btn btn-big hidden" type="button" data-do="repaired">Repaired, usable again</button>
+        </div>
+        <form class="stack hidden" id="act-service" autocomplete="off">
           <div class="field"><label for="act-date">Next lifting points inspection due <span class="req">*</span></label>
             <input id="act-date" type="date" required>
             <div class="row quick-dates" style="margin-top:8px"><button type="button" class="btn" data-months="6">In 6 months</button><button type="button" class="btn" data-months="12">In 12 months</button></div></div>
-        </div>
-        <button class="btn btn-primary btn-big" type="submit" id="act-save"></button>
+          <button class="btn btn-primary btn-big" type="submit">Save service</button>
+        </form>
+        <form class="stack hidden" id="act-defect" autocomplete="off">
+          <div class="field"><label for="act-note">What is wrong? <span class="muted">(optional)</span></label><input id="act-note" type="text" maxlength="300"></div>
+          <button class="btn btn-big btn-danger" type="submit">Mark as defect</button>
+        </form>
         <button class="btn" type="button" id="act-cancel">Cancel</button>
-      </form>
+      </div>
     </section>
 
     <!-- equipment list -->
     <section class="hidden" id="view-list">
       <p><a href="#" class="back-link">← Warehouse</a></p>
       <h1>Equipment</h1>
-      <input id="list-q" type="search" placeholder="Search serial, equipment, location or label" aria-label="Search equipment">
-      <div class="card" style="margin-top:12px"><div class="table-wrap"><table class="unit-table">
-        <thead><tr><th>Equipment</th><th>Serial</th><th>Location</th><th>Label</th></tr></thead><tbody id="list-rows"></tbody></table></div></div>
+      <section class="card"><div class="section-head"><h2>SOV</h2></div><div id="bar-sov"></div>
+        <div class="table-wrap"><table class="unit-table"><thead><tr><th>Equipment</th><th>Serial</th><th>Fuel</th><th>Status</th></tr></thead><tbody id="rows-sov"></tbody></table></div></section>
+      <section class="card"><div class="section-head"><h2>Turbines</h2></div><div id="bar-wtg"></div>
+        <div class="table-wrap"><table class="unit-table"><thead><tr><th>WTG</th><th>Equipment</th><th>Serial</th><th>Fuel</th><th>Status</th></tr></thead><tbody id="rows-wtg"></tbody></table></div></section>
+      <section class="card hidden" id="card-none"><div class="section-head"><h2>Not scanned yet</h2></div>
+        <div class="table-wrap"><table class="unit-table"><thead><tr><th>Equipment</th><th>Serial</th><th>Label</th><th>Status</th></tr></thead><tbody id="rows-none"></tbody></table></div></section>
     </section>
 
     <!-- to investigate -->

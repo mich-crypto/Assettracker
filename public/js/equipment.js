@@ -18,9 +18,19 @@ export function levelField(type) {
   return nums.find((f) => /fuel/i.test(f.key)) || nums.find((f) => f.unit === '%') || null;
 }
 
+/** The latest check values; a service recorded after the last scan clears its alarms. */
+export function effectiveCheck(asset, type) {
+  const c = asset.check;
+  if (!c || !asset.serviced_at || asset.serviced_at <= c.recorded_at) return c;
+  const data = { ...c.data };
+  for (const f of type.fields) if (f.scope === 'check' && f.type === 'multiselect') data[f.key] = [];
+  return { ...c, data };
+}
+
 /** Warnings: from the latest check (low fuel, alarms) and from due dates (lifting points inspection). */
 export function alertsFor(asset, type, today = new Date()) {
-  const fromCheck = asset.check ? evaluateAlerts(type.fields, asset.check.data) : [];
+  const c = effectiveCheck(asset, type);
+  const fromCheck = c ? evaluateAlerts(type.fields, c.data) : [];
   return [...fromCheck, ...evaluateDueAlerts(type.fields, asset.attributes, today)];
 }
 

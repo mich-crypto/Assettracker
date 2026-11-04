@@ -14,6 +14,7 @@ export function serviceRows(assets, types, today = new Date()) {
     const type = typeById(types, a.type_id);
     const reasons = [];
     let urgency = Infinity;
+    if (a.defect) { reasons.push(a.defect_note ? `Defect: ${a.defect_note}` : 'Defect'); urgency = -1e6; }
     for (const w of alertsFor(a, type, today)) {
       const field = type.fields.find((f) => f.key === w.key);
       if (field?.type === 'date') { reasons.push(w.text); urgency = Math.min(urgency, w.days); }

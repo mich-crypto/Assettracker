@@ -1,0 +1,78 @@
+// Shared by the overview and the warehouse: a unit with its status, fuel and warnings,
+// and the search / filter / sort bar above a list of units.
+import { esc } from './app.js';
+import { alertsFor, blockedBy, effectiveCheck, kindOf, levelField } from './equipment.js';
+import { formatValue } from './fields.js';
+
+/** A unit from GET /assets plus what the lists need: kind, warnings, why it is blocked, fuel level. */
+export function enrich(a, type) {
+  const f = levelField(type);
+  const c = effectiveCheck(a, type);
+  const v = f && c ? c.data[f.key] : null;
+  const alerts = alertsFor(a, type);
+  const block = blockedBy(a, type);
+  return { ...a, type, kind: kindOf(a, type), alerts, block, status: block ? 'blocked' : alerts.length ? 'warning' : 'ok', levelField: f, fuel: v };
+}
+
+export function fuelCell(a) {
+  const f = a.levelField;
+  if (a.fuel == null) return '<span class="muted">—</span>';
+  const pct = f.max ? Math.max(0, Math.min(100, (a.fuel / f.max) * 100)) : a.fuel;
+  const low = a.alerts.some((x) => x.key === f.key);
+  return `<span class="fuel"><span class="fuel-bar${low ? ' low' : ''}" aria-hidden="true"><span style="width:${pct}%"></span></span>${esc(formatValue(f, a.fuel))}</span>`;
+}
+
+/** Red: may not be used. Orange: warning. Nothing when all is well. */
+export function statusCell(a) {
+  if (a.block) return `<span class="stat-blocked" title="${esc(a.block.text)}"><span aria-hidden="true">⛔</span> ${esc(a.block.short)}</span>`;
+  if (a.alerts.length) {
+    const text = a.alerts.map((x) => x.text).join('; ');
+    return `<span class="warn-sym" title="${esc(text)}" role="img" aria-label="Warning: ${esc(text)}">⚠</span><span class="warn-text">${esc(a.alerts[0].text)}${a.alerts.length > 1 ? ` +${a.alerts.length - 1}` : ''}</span>`;
+  }
+  return '';
+}
+
+export const rowClass = (a) => `clickable${a.block ? ' is-blocked' : ''}`;
+
+const natural = (x, y) => String(x ?? '').localeCompare(String(y ?? ''), undefined, { numeric: true });
+const rank = { blocked: 0, warning: 1, ok: 2 };
+const SORTS = {
+  kind: ['Sort: equipment', (x, y) => natural(x.kind, y.kind) || natural(x.serial, y.serial)],
+  wtg: ['Sort: turbine', (x, y) => natural(x.last?.location_name, y.last?.location_name) || natural(x.kind, y.kind)],
+  status: ['Sort: problems first', (x, y) => rank[x.status] - rank[y.status] || natural(x.kind, y.kind)],
+  'fuel-asc': ['Sort: fuel, low first', (x, y) => (x.fuel ?? 1e9) - (y.fuel ?? 1e9) || natural(x.kind, y.kind)],
+  'fuel-desc': ['Sort: fuel, high first', (x, y) => (y.fuel ?? -1) - (x.fuel ?? -1) || natural(x.kind, y.kind)],
+  checked: ['Sort: longest not checked', (x, y) => String(x.check?.recorded_at ?? '').localeCompare(String(y.check?.recorded_at ?? ''))],
+};
+
+const norm = (v) => String(v || '').toLowerCase().replace(/\s+/g, '');
+const haystack = (a) => norm([a.kind, a.last?.location_name, a.serial, a.name, ...a.tags.map((t) => t.code), ...a.alerts.map((x) => x.text), a.block?.text].join(' '));
+
+/**
+ * Fills a toolbar element (search, kind, status, sort) and returns its controller.
+ * `sorts` lists the sort keys offered, the first one is the default.
+ */
+export function initToolbar(el, { sorts = ['kind', 'status', 'fuel-asc', 'fuel-desc', 'checked'], onChange }) {
+  el.classList.add('toolbar');
+  el.innerHTML = `<input type="search" data-f="q" placeholder="Search" aria-label="Search">
+    <select data-f="kind" aria-label="Equipment type"><option value="">All equipment</option></select>
+    <select data-f="status" aria-label="Status"><option value="">All statuses</option><option value="blocked">Defect / not usable</option><option value="warning">Warning</option><option value="ok">OK</option></select>
+    <select data-f="sort" aria-label="Sort">${sorts.map((k) => `<option value="${k}">${SORTS[k][0]}</option>`).join('')}</select>`;
+  const get = (f) => el.querySelector(`[data-f=${f}]`);
+  el.querySelectorAll('[data-f]').forEach((x) => x.addEventListener('input', onChange));
+  return {
+    state: () => ({ q: norm(get('q').value), kind: get('kind').value, status: get('status').value, sort: get('sort').value }),
+    /** Offer the kinds that exist (keeps the current choice when it still exists). */
+    setKinds(kinds) {
+      const sel = get('kind'), cur = sel.value;
+      const list = [...new Set(kinds)].sort(natural);
+      sel.innerHTML = '<option value="">All equipment</option>' + list.map((k) => `<option${k === cur ? ' selected' : ''}>${esc(k)}</option>`).join('');
+    },
+  };
+}
+
+export function applyFilters(units, { q, kind, status, sort }) {
+  return units
+    .filter((a) => (!kind || a.kind === kind) && (!status || a.status === status) && (!q || haystack(a).includes(q)))
+    .sort(SORTS[sort]?.[1] || SORTS.kind[1]);
+}

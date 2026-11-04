@@ -455,3 +455,12 @@ main.narrow-wide { max-width: 760px; margin: 0 auto; padding: 16px; }
 tr.is-blocked td { background: var(--danger-bg); }
 tr.is-blocked td:first-child { box-shadow: inset 4px 0 0 var(--danger); }
 .btn-big.btn-danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+
+/* Lists with filter and sort */
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.toolbar input[type=search] { flex: 1 1 180px; width: auto; min-width: 0; }
+.toolbar select { flex: 0 1 auto; width: auto; max-width: 100%; }
+.kpi-red b { color: var(--danger); }
+.warn-text { margin-left: 6px; font-size: .85rem; color: var(--warn); }
+.paper { display: none; }
+@media print { .paper.print-area { display: block; position: static; font-size: 11pt; } .paper table { width: 100%; border-collapse: collapse; } .paper th, .paper td { border: 1px solid #000; padding: 4px 6px; text-align: left; } .paper td:last-child { width: 28%; } }

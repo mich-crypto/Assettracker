@@ -6,21 +6,23 @@ import {
   startAutoSync, syncNow, toast, updateSyncPill,
 } from './app.js';
 import { showInstallGuide } from './install.js';
-import { alertsFor, kindOf, typeById } from './equipment.js';
+import { kindOf, typeById } from './equipment.js';
+import { applyFilters, enrich as enrichUnit, fuelCell, initToolbar, rowClass, statusCell } from './equipment-list.js';
 import { collectFields, renderFields, showErrors } from './forms.js';
 import { normalizeValues } from './fields.js';
 import { buildTemplate, parseAssetRows } from './importer.js';
 import { downloadBlob } from './print.js';
 import { parseTagText, scanQr } from './scan.js';
-import { serviceRows } from './reports.js';
-import { outbox } from './store.js';
+import { cache, outbox } from './store.js';
 
 const ok = requireProject();
 const $ = (id) => document.getElementById(id);
 
 let ref = null;        // offline snapshot: types, locations, assets (with tags and last state)
 let selected = null;   // asset chosen for refuel / service
-let mode = null;       // 'refuel' | 'service'
+let units = [];        // equipment with where it is, fuel and status (from GET /assets, cached)
+let barSov;
+let barWtg;
 let imported = null;   // parsed import list
 
 if (ok) init();
@@ -40,10 +42,13 @@ async function init() {
   setTimeout(() => showInstallGuide({ auto: true }), 600);
   $('act-scan').onclick = async () => { const t = await scanQr(); if (t) pick(parseTagText(t)); };
   $('act-serial').onchange = () => { if ($('act-serial').value.trim()) pick($('act-serial').value.trim()); };
-  $('act-confirm').onsubmit = onConfirmAction;
   $('act-cancel').onclick = () => resetAction();
-  $('act-confirm').querySelectorAll('[data-months]').forEach((b) => (b.onclick = () => { $('act-date').value = addMonths(Number(b.dataset.months)); }));
-  $('list-q').oninput = renderList;
+  $('act-buttons').querySelectorAll('[data-do]').forEach((b) => (b.onclick = () => onDo(b.dataset.do)));
+  $('act-service').onsubmit = onServiceSave;
+  $('act-defect').onsubmit = onDefectSave;
+  $('act-service').querySelectorAll('[data-months]').forEach((b) => (b.onclick = () => { $('act-date').value = addMonths(Number(b.dataset.months)); }));
+  barSov = initToolbar($('bar-sov'), { onChange: renderList });
+  barWtg = initToolbar($('bar-wtg'), { sorts: ['wtg', 'kind', 'status', 'fuel-asc', 'fuel-desc', 'checked'], onChange: renderList });
   $('imp-template').onclick = () => downloadBlob(new Blob([buildTemplate(ref.types)], { type: 'text/csv' }), 'equipment-import-template.csv');
   $('imp-file').onchange = async () => { const f = $('imp-file').files[0]; if (f) { $('imp-text').value = await f.text(); checkImport(); } };
   $('imp-check').onclick = checkImport;
@@ -64,35 +69,23 @@ const addMonths = (n) => {
 function route() {
   const view = location.hash.slice(1).split('&')[0] || 'home';
   for (const id of ['home', 'action', 'list', 'issues', 'import']) $(`view-${id}`).classList.add('hidden');
-  const shown = view === 'refuel' || view === 'service' ? 'action' : ['list', 'issues', 'import'].includes(view) ? view : 'home';
+  const shown = ['scan', 'refuel', 'service'].includes(view) ? 'action' : ['list', 'issues', 'import'].includes(view) ? view : 'home';
   $(`view-${shown}`).classList.remove('hidden');
   document.querySelectorAll('.back-link').forEach((a) => (a.href = path('warehouse')));
   if (shown === 'home') renderHome();
-  if (shown === 'action') startAction(view);
-  if (shown === 'list') renderList();
+  if (shown === 'action') startAction();
+  if (shown === 'list') loadList();
   if (shown === 'issues') loadIssues();
   window.scrollTo(0, 0);
 }
 
 function renderHome() {
-  $('issue-count').textContent = ref.openIssues ? `${ref.openIssues} waiting for you` : 'Nothing reported';
-  const rows = serviceRows(withState(ref.assets), ref.types).slice(0, 6);
-  $('due-list').innerHTML = rows.map((r) => `<div class="due-row"><div><b>${esc(r.kind)}</b> <span class="muted">${esc(r.serial)} · ${esc(r.location)}</span></div>
-      <div>${r.reasons.map((x) => `<div><span class="warn-sym" aria-hidden="true">⚠</span> ${esc(x)}</div>`).join('')}</div></div>`).join('')
-    || '<p class="muted">Nothing needs service right now.</p>';
-  $('due-more').href = `${path('overview')}#service`;
+  $('issue-count').textContent = ref.openIssues ? `${ref.openIssues} waiting` : '';
 }
 
-/** The offline snapshot has no check values or locations by name; give the report what it needs. */
-function withState(assets) {
-  return assets.map((a) => ({ ...a, last: a.state ? { location_name: locationName(a.state.location_id) } : null, check: null }));
-}
+// ---------------------------------------------------------------- scan equipment: refuelled, serviced, defect
 
-// ---------------------------------------------------------------- refuelled / serviced
-
-function startAction(view) {
-  mode = view;
-  $('act-title').textContent = view === 'refuel' ? 'Refuelled' : 'Serviced';
+function startAction() {
   $('act-serials').innerHTML = ref.assets.map((a) => `<option value="${esc(a.serial)}">${esc(kindOf(a, typeOf(a)))}</option>`).join('');
   resetAction();
 }
@@ -101,6 +94,9 @@ function resetAction() {
   selected = null;
   $('act-pick').classList.remove('hidden');
   $('act-confirm').classList.add('hidden');
+  $('act-service').classList.add('hidden');
+  $('act-defect').classList.add('hidden');
+  $('act-buttons').classList.remove('hidden');
   $('act-serial').value = '';
   $('act-error').textContent = '';
 }
@@ -116,54 +112,96 @@ function pick(codeOrSerial) {
   const type = typeOf(asset);
   $('act-pick').classList.add('hidden');
   $('act-confirm').classList.remove('hidden');
+  $('act-service').classList.add('hidden');
+  $('act-defect').classList.add('hidden');
+  $('act-buttons').classList.remove('hidden');
   $('act-kind').textContent = kindOf(asset, type);
   const where = asset.state?.location_id ? locationName(asset.state.location_id) : null;
-  $('act-sub').textContent = `${where ? `At ${where} · ` : ''}${asset.tags[0] ? `tag ${asset.tags[0].code}` : 'no label yet'}`;
-  $('act-service').classList.toggle('hidden', mode !== 'service');
-  $('act-date').required = mode === 'service';
-  $('act-date').value = '';
-  $('act-save').textContent = mode === 'refuel' ? 'Yes, it is refuelled (full)' : 'Mark as serviced';
+  $('act-sub').textContent = `${asset.serial}${where ? ` · ${where}` : ''}`;
+  const u = enrichUnit({ ...asset, check: null }, type);
+  $('act-state').innerHTML = u.block ? `<p class="blocked-why" style="background:var(--danger);color:#fff">⛔ ${esc(u.block.text)}</p>` : '';
+  $('act-buttons').querySelector('[data-do=repaired]').classList.toggle('hidden', !asset.defect);
+  $('act-buttons').querySelector('[data-do=defect]').classList.toggle('hidden', !!asset.defect);
 }
 
-async function onConfirmAction(e) {
-  e.preventDefault();
+function onDo(what) {
   if (!selected) return;
-  const item = {
-    id: crypto.randomUUID(), kind: 'event', event: mode, asset_id: selected.id, tag_code: selected.tags[0]?.code ?? null,
-    recorded_at: new Date().toISOString(), project: SLUG,
-    label: `${kindOf(selected, typeOf(selected))} · ${mode === 'refuel' ? 'refuelled' : 'serviced'}`,
-  };
-  if (mode === 'service') {
-    if (!$('act-date').value) { $('act-date').focus(); return; }
-    item.next_inspection = $('act-date').value;
-  }
-  await outbox.put(item);
-  updateSyncPill();
-  toast(mode === 'refuel' ? `${kindOf(selected, typeOf(selected))} marked as refuelled` : `${kindOf(selected, typeOf(selected))} serviced, next inspection ${fmtDate(item.next_inspection)}`, 'ok');
-  if (mode === 'service') selected.attributes.inspection_due = item.next_inspection;
+  if (what === 'service') { $('act-buttons').classList.add('hidden'); $('act-service').classList.remove('hidden'); $('act-date').value = ''; $('act-date').focus(); return; }
+  if (what === 'defect') { $('act-buttons').classList.add('hidden'); $('act-defect').classList.remove('hidden'); $('act-note').value = ''; $('act-note').focus(); return; }
+  recordEvent(selected, what).then(() => resetAction());
+}
+
+async function onServiceSave(e) {
+  e.preventDefault();
+  if (!$('act-date').value) { $('act-date').focus(); return; }
+  await recordEvent(selected, 'service', { next_inspection: $('act-date').value });
   resetAction();
-  if (navigator.onLine !== false) syncNow();
+}
+
+async function onDefectSave(e) {
+  e.preventDefault();
+  await recordEvent(selected, 'defect', { notes: $('act-note').value.trim() || null });
+  resetAction();
+}
+
+/** Stores an event on the phone (synced when there is a connection) and updates this phone's copy at once. */
+async function recordEvent(asset, event, extra = {}) {
+  const type = typeOf(asset);
+  const name = kindOf(asset, type);
+  const text = { refuel: 'refuelled', service: 'serviced', defect: 'defect', repaired: 'repaired' }[event];
+  await outbox.put({
+    id: crypto.randomUUID(), kind: 'event', event, asset_id: asset.id, tag_code: asset.tags[0]?.code ?? null,
+    recorded_at: new Date().toISOString(), project: SLUG, label: `${name} · ${text}`, ...extra,
+  });
+  const at = new Date().toISOString();
+  if (event === 'service' && asset.attributes) asset.attributes.inspection_due = extra.next_inspection;
+  if (event === 'defect') { asset.defect = 1; asset.defect_note = extra.notes ?? null; asset.defect_at = at; }
+  if (event === 'repaired') { asset.defect = 0; asset.defect_note = null; asset.defect_at = at; }
+  const u = units.find((x) => x.id === asset.id);
+  if (u) {
+    if (event === 'refuel') u.refueled_at = at;
+    if (event === 'service') u.serviced_at = at;
+    Object.assign(u, { defect: asset.defect, defect_note: asset.defect_note, attributes: asset.attributes });
+  }
+  cache.set(`bootstrap:${SLUG}`, ref).catch(() => {});
+  updateSyncPill();
+  toast(event === 'service' ? `${name} serviced, next inspection ${fmtDate(extra.next_inspection)}` : `${name}: ${text}`, 'ok');
+  if (navigator.onLine !== false) syncNow().then(() => loadList(true)).catch(() => {});
 }
 
 // ---------------------------------------------------------------- equipment list
 
+/** Fuel, warnings and where everything is: from the server when online, else the copy on the phone. */
+async function loadList(quiet = false) {
+  const key = `assets:${SLUG}`;
+  try {
+    const { assets } = await api('/api/assets');
+    cache.set(key, assets).catch(() => {});
+    units = assets;
+  } catch {
+    units = (await cache.get(key).catch(() => null)) || ref.assets.map((a) => ({ ...a, last: a.state ? { location_name: locationName(a.state.location_id), location_kind: ref.locations.find((l) => l.id === a.state.location_id)?.kind } : null, check: null }));
+  }
+  if (!quiet || !$('view-list').classList.contains('hidden')) renderList();
+}
+
 function renderList() {
-  const q = $('list-q').value.trim().toLowerCase().replace(/\s+/g, '');
-  const rows = ref.assets.filter((a) => {
-    if (!q) return true;
-    const hay = [kindOf(a, typeOf(a)), a.serial, locationName(a.state?.location_id), ...a.tags.map((t) => t.code)].join(' ').toLowerCase().replace(/\s+/g, '');
-    return hay.includes(q);
-  });
-  $('list-rows').innerHTML = rows.map((a) => {
-    const type = typeOf(a);
-    const warn = alertsFor({ ...a, check: null }, type).some((w) => w.days != null);
-    return `<tr class="clickable" data-id="${esc(a.id)}">
-      <td><b>${esc(kindOf(a, type))}</b>${warn ? ' <span class="warn-sym" title="Inspection due">⚠</span>' : ''}</td>
-      <td class="mono">${esc(a.serial)}</td>
-      <td>${esc(locationName(a.state?.location_id) || '—')}</td>
-      <td>${a.tags.length ? `<span class="badge badge-ok">${esc(a.tags[0].kind.toUpperCase())}</span>` : '<span class="badge badge-warn">no label</span>'}</td></tr>`;
-  }).join('') || '<tr><td colspan="4" class="muted">No equipment found.</td></tr>';
-  $('list-rows').querySelectorAll('tr[data-id]').forEach((tr) => (tr.onclick = () => openEditor(tr.dataset.id)));
+  const all = units.map((a) => enrichUnit(a, typeOf(a)));
+  const onSov = all.filter((a) => a.last?.location_kind === 'SOV');
+  const onWtg = all.filter((a) => a.last?.location_kind === 'WTG');
+  const none = all.filter((a) => !a.last?.location_kind);
+  barSov.setKinds(onSov.map((a) => a.kind));
+  barWtg.setKinds(onWtg.map((a) => a.kind));
+  const label = (a) => (a.tags.length ? `<span class="badge badge-ok">${esc(a.tags[0].kind.toUpperCase())}</span>` : '<span class="badge badge-warn">no label</span>');
+  const row = (a, cells) => `<tr class="${rowClass(a)}" data-id="${esc(a.id)}">${cells}</tr>`;
+  $('rows-sov').innerHTML = applyFilters(onSov, barSov.state()).map((a) => row(a,
+    `<td><b>${esc(a.kind)}</b></td><td class="mono">${esc(a.serial)}</td><td>${fuelCell(a)}</td><td>${statusCell(a)}</td>`)).join('')
+    || `<tr><td colspan="4" class="muted">${onSov.length ? 'Nothing matches.' : 'Nothing on the SOV.'}</td></tr>`;
+  $('rows-wtg').innerHTML = applyFilters(onWtg, barWtg.state()).map((a) => row(a,
+    `<td class="wtg-name">${esc(a.last.location_name)}</td><td><b>${esc(a.kind)}</b></td><td class="mono">${esc(a.serial)}</td><td>${fuelCell(a)}</td><td>${statusCell(a)}</td>`)).join('')
+    || `<tr><td colspan="5" class="muted">${onWtg.length ? 'Nothing matches.' : 'Nothing on turbines.'}</td></tr>`;
+  $('card-none').classList.toggle('hidden', !none.length);
+  $('rows-none').innerHTML = none.map((a) => row(a, `<td><b>${esc(a.kind)}</b></td><td class="mono">${esc(a.serial)}</td><td>${label(a)}</td><td>${statusCell(a)}</td>`)).join('');
+  document.querySelectorAll('#view-list tr[data-id]').forEach((tr) => (tr.onclick = () => openEditor(tr.dataset.id)));
 }
 
 function openEditor(id) {
@@ -198,7 +236,7 @@ function openEditor(id) {
       toast('Saved', 'ok');
       ref = await loadReference();
       d.classList.add('hidden');
-      renderList();
+      loadList();
     } catch (err) { $('ed-error').textContent = err.status === 0 ? 'Editing needs a connection.' : err.message; }
   };
   $('ed-retire').onclick = async () => {
@@ -208,7 +246,7 @@ function openEditor(id) {
       toast('Equipment retired', 'ok');
       ref = await loadReference();
       d.classList.add('hidden');
-      renderList();
+      loadList();
     } catch (err) { toast(err.status === 0 ? 'Retiring needs a connection' : err.message, 'error'); }
   };
 }
