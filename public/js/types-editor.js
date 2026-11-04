@@ -42,6 +42,7 @@ const TYPE_LABELS = {
 
 const PRESETS = {
   fuel: { label: 'Fuel level', type: 'number', scope: 'check', required: true, min: 0, max: 100, step: 25, unit: '%', alert: { atMost: 25 } },
+  battery: { label: 'Battery level', type: 'number', scope: 'check', required: true, min: 0, max: 100, step: 20, unit: '%', alert: { atMost: 20 } },
   cube: { label: 'Fuel cube connected', type: 'boolean', scope: 'check', required: true, sovValue: false },
   ok: { label: 'Condition OK', type: 'boolean', scope: 'check', required: true, alert: { equals: false } },
   alarms: { label: 'Active alarms', type: 'multiselect', scope: 'check', options: ['Fault', 'Damage', 'Other'], alert: { any: true } },

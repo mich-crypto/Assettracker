@@ -27,6 +27,13 @@ export function effectiveCheck(asset, type) {
   return { ...c, data };
 }
 
+/** Every percentage level a unit reports (fuel first, then e.g. a hybrid's battery). */
+export function levelFields(type) {
+  const nums = type.fields.filter((f) => f.scope === 'check' && f.type === 'number' && f.unit === '%');
+  const fuel = levelField(type);
+  return [...(fuel && nums.includes(fuel) ? [fuel] : []), ...nums.filter((f) => f !== fuel)];
+}
+
 /** Warnings: from the latest check (low fuel, alarms) and from due dates (lifting points inspection). */
 export function alertsFor(asset, type, today = new Date()) {
   const c = effectiveCheck(asset, type);

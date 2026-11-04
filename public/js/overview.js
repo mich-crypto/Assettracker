@@ -27,7 +27,7 @@ async function init() {
   registerServiceWorker();
   initMap();
   barSov = initToolbar($('bar-sov'), { onChange: render });
-  barWtg = initToolbar($('bar-wtg'), { sorts: ['wtg', 'kind', 'status', 'fuel-asc', 'fuel-desc', 'checked'], onChange: render });
+  barWtg = initToolbar($('bar-wtg'), { sorts: ['wtg', 'kind', 'status', 'fuel-asc', 'battery-asc', 'fuel-desc', 'checked'], onChange: render });
   $('fuel-max').onchange = render;
   $('svc-copy').onclick = () => copyReport('service');
   $('fuel-copy').onclick = () => copyReport('fuel');
@@ -244,7 +244,7 @@ function printPaper() {
     <p>Printed ${esc(new Date().toLocaleString())}. Keep this copy on board. Write changes in the last column and give them to the warehouse.</p>
     <table><thead><tr><th>Location</th><th>Equipment</th><th>Serial</th><th>Fuel</th><th>Status</th><th>Inspection due</th><th>Changes</th></tr></thead><tbody>
     ${rows.map((a) => `<tr><td>${esc(a.last?.location_name || '')}</td><td>${esc(a.kind)}</td><td>${esc(a.serial)}</td>
-      <td>${a.fuel != null ? esc(formatValue(a.levelField, a.fuel)) : ''}</td>
+      <td>${a.levels.filter((l) => l.v != null).map((l) => `${a.levels.length > 1 ? (/batter/i.test(l.f.key) ? 'Battery ' : 'Fuel ') : ''}${esc(formatValue(l.f, l.v))}`).join(', ')}</td>
       <td>${a.block ? `<b>DO NOT USE: ${esc(a.block.short)}</b>` : a.alerts.length ? esc(a.alerts.map((x) => x.text).join('; ')) : 'OK'}</td>
       <td>${esc(due(a))}</td><td></td></tr>`).join('')}</tbody></table>`;
   printOnly($('paper'));

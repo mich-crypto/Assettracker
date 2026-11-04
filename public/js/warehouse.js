@@ -48,7 +48,7 @@ async function init() {
   $('act-defect').onsubmit = onDefectSave;
   $('act-service').querySelectorAll('[data-months]').forEach((b) => (b.onclick = () => { $('act-date').value = addMonths(Number(b.dataset.months)); }));
   barSov = initToolbar($('bar-sov'), { onChange: renderList });
-  barWtg = initToolbar($('bar-wtg'), { sorts: ['wtg', 'kind', 'status', 'fuel-asc', 'fuel-desc', 'checked'], onChange: renderList });
+  barWtg = initToolbar($('bar-wtg'), { sorts: ['wtg', 'kind', 'status', 'fuel-asc', 'battery-asc', 'fuel-desc', 'checked'], onChange: renderList });
   $('imp-template').onclick = () => downloadBlob(new Blob([buildTemplate(ref.types)], { type: 'text/csv' }), 'equipment-import-template.csv');
   $('imp-file').onchange = async () => { const f = $('imp-file').files[0]; if (f) { $('imp-text').value = await f.text(); checkImport(); } };
   $('imp-check').onclick = checkImport;
